@@ -1,16 +1,5 @@
 package com.arny.dnshostsgenerator.domain
 
-data class DomainGroup(
-    val name: String,
-    val entries: List<DomainEntry>,
-)
-
-data class DomainEntry(
-    val value: String,
-    val enabled: Boolean = true,
-    val sourceLine: Int? = null,
-)
-
 data class DnsProviderPreset(
     val id: String,
     val title: String,
@@ -18,7 +7,47 @@ data class DnsProviderPreset(
     val checkDns: String = "8.8.8.8",
     val outputFileName: String,
     val enabledByDefault: Boolean = true,
-)
+) {
+    companion object {
+        /**
+         * Возвращает список моковых данных для использования в @Preview
+         * и UI-тестах.
+         */
+        fun previewData(): List<DnsProviderPreset> = listOf(
+            DnsProviderPreset(
+                id = "1",
+                title = "Recommended (Cloudflare)",
+                primaryDns = "1.1.1.1",
+                checkDns = "1.0.0.1",
+                outputFileName = "hosts_cloudflare.txt"
+            ),
+            DnsProviderPreset(
+                id = "2",
+                title = "Google DNS",
+                primaryDns = "8.8.8.8",
+                checkDns = "8.8.4.4",
+                outputFileName = "hosts_google.txt"
+            ),
+            DnsProviderPreset(
+                id = "3",
+                title = "OpenDNS",
+                primaryDns = "205.155.74.6",
+                checkDns = "208.67.222.222",
+                outputFileName = "hosts_opendns.txt"
+            ),
+            // Добавляем случай с выключенным пресетом для проверки UI состояния
+            DnsProviderPreset(
+                id = "4",
+                title = "Custom (Disabled)",
+                primaryDns = "192.168.1.1",
+                checkDns = "8.8.8.8",
+                outputFileName = "hosts_custom.txt",
+                enabledByDefault = false
+            )
+        )
+    }
+}
+
 
 enum class DnsRecordType {
     A,
