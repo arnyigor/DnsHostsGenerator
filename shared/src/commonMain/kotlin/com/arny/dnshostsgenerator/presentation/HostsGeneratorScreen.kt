@@ -1,6 +1,13 @@
 package com.arny.dnshostsgenerator.presentation
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,20 +19,22 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -34,12 +43,17 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -48,7 +62,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.arny.dnshostsgenerator.domain.DnsProviderPreset
 import com.arny.dnshostsgenerator.domain.GenerationResult
-import com.arny.dnshostsgenerator.export.CsvExporter
 
 /**
  * Stateless-компонент UI. Не содержит логики генерации и корутин. Идеален для Preview.
@@ -58,6 +71,7 @@ fun HostsGeneratorScreen(
     presets: List<DnsProviderPreset>,
     selectedPresetIds: Set<String>,
     domainText: String,
+    domainGroups: List<DomainGroupUi>,
     dedupEnabled: Boolean,
     isGenerating: Boolean,
     progressText: String,
@@ -69,13 +83,24 @@ fun HostsGeneratorScreen(
     onClearPresets: () -> Unit,
     onDedupChanged: (Boolean) -> Unit,
     onDomainTextChanged: (String) -> Unit,
+    onDomainGroupEnabledChanged: (Long, Boolean) -> Unit,
+    onAddDomainGroup: (String) -> Unit,
+    onRenameDomainGroup: (Long, String) -> Unit,
+    onDeleteDomainGroup: (Long) -> Unit,
+    onAddDomains: (Long, String) -> Unit,
+    onRenameDomain: (Long, String) -> Unit,
+    onDeleteDomain: (Long) -> Unit,
     onGenerate: () -> Unit,
     onResetDomains: () -> Unit,
     onSelectResult: (Int) -> Unit,
     onCopyText: (String) -> Unit,
     onSaveTextFile: (String, String) -> Unit,
 ) {
-    val selectedPresetsCount = presets.count { it.id in selectedPresetIds }
+    val selectedPresetsCount = if (selectedPresetIds.isEmpty() && presets.isNotEmpty()) {
+        1
+    } else {
+        presets.count { it.id in selectedPresetIds }
+    }
     val selectedResult =
         results.getOrNull(selectedResultIndex.coerceIn(0, (results.size - 1).coerceAtLeast(0)))
 
@@ -101,15 +126,23 @@ fun HostsGeneratorScreen(
                     selectedPresetIds = selectedPresetIds,
                     dedupEnabled = dedupEnabled,
                     domainText = domainText,
+                    domainGroups = domainGroups,
                     isGenerating = isGenerating,
                     selectedPresetsCount = selectedPresetsCount,
                     progressText = progressText,
                     statusText = statusText,
                     onPresetChecked = onPresetChecked,
                     onSelectAll = onSelectAllPresets,
-                    onClear = onClearPresets,
+                    onSelectRecommended = onClearPresets,
                     onDedupChanged = onDedupChanged,
                     onDomainTextChanged = onDomainTextChanged,
+                    onDomainGroupEnabledChanged = onDomainGroupEnabledChanged,
+                    onAddDomainGroup = onAddDomainGroup,
+                    onRenameDomainGroup = onRenameDomainGroup,
+                    onDeleteDomainGroup = onDeleteDomainGroup,
+                    onAddDomains = onAddDomains,
+                    onRenameDomain = onRenameDomain,
+                    onDeleteDomain = onDeleteDomain,
                     onGenerate = onGenerate,
                     onResetDomains = onResetDomains,
                 )
@@ -141,15 +174,23 @@ fun HostsGeneratorScreen(
                     selectedPresetIds = selectedPresetIds,
                     dedupEnabled = dedupEnabled,
                     domainText = domainText,
+                    domainGroups = domainGroups,
                     isGenerating = isGenerating,
                     selectedPresetsCount = selectedPresetsCount,
                     progressText = progressText,
                     statusText = statusText,
                     onPresetChecked = onPresetChecked,
                     onSelectAll = onSelectAllPresets,
-                    onClear = onClearPresets,
+                    onSelectRecommended = onClearPresets,
                     onDedupChanged = onDedupChanged,
                     onDomainTextChanged = onDomainTextChanged,
+                    onDomainGroupEnabledChanged = onDomainGroupEnabledChanged,
+                    onAddDomainGroup = onAddDomainGroup,
+                    onRenameDomainGroup = onRenameDomainGroup,
+                    onDeleteDomainGroup = onDeleteDomainGroup,
+                    onAddDomains = onAddDomains,
+                    onRenameDomain = onRenameDomain,
+                    onDeleteDomain = onDeleteDomain,
                     onGenerate = onGenerate,
                     onResetDomains = onResetDomains,
                 )
@@ -177,18 +218,28 @@ private fun ControlsPanel(
     selectedPresetIds: Set<String>,
     dedupEnabled: Boolean,
     domainText: String,
+    domainGroups: List<DomainGroupUi>,
     isGenerating: Boolean,
     selectedPresetsCount: Int,
     progressText: String,
     statusText: String,
     onPresetChecked: (String, Boolean) -> Unit,
     onSelectAll: () -> Unit,
-    onClear: () -> Unit,
+    onSelectRecommended: () -> Unit,
     onDedupChanged: (Boolean) -> Unit,
     onDomainTextChanged: (String) -> Unit,
+    onDomainGroupEnabledChanged: (Long, Boolean) -> Unit,
+    onAddDomainGroup: (String) -> Unit,
+    onRenameDomainGroup: (Long, String) -> Unit,
+    onDeleteDomainGroup: (Long) -> Unit,
+    onAddDomains: (Long, String) -> Unit,
+    onRenameDomain: (Long, String) -> Unit,
+    onDeleteDomain: (Long) -> Unit,
     onGenerate: () -> Unit,
     onResetDomains: () -> Unit,
 ) {
+    var presetsExpanded by rememberSaveable { mutableStateOf(false) }
+
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -197,9 +248,13 @@ private fun ControlsPanel(
         PresetsPanel(
             presets = presets,
             selectedPresetIds = selectedPresetIds,
+            expanded = presetsExpanded,
+            onExpandedChange = { expanded ->
+                presetsExpanded = expanded
+            },
             onPresetChecked = onPresetChecked,
+            onSelectRecommended = onSelectRecommended,
             onSelectAll = onSelectAll,
-            onClear = onClear,
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = dedupEnabled, onCheckedChange = onDedupChanged)
@@ -212,8 +267,16 @@ private fun ControlsPanel(
         // Интегрированный список дополнительно к тексту (переключение)
         DomainInputArea(
             domainText = domainText,
+            domainGroups = domainGroups,
             modifier = domainEditorModifier,
-            onDomainTextChanged = onDomainTextChanged
+            onDomainTextChanged = onDomainTextChanged,
+            onDomainGroupEnabledChanged = onDomainGroupEnabledChanged,
+            onAddDomainGroup = onAddDomainGroup,
+            onRenameDomainGroup = onRenameDomainGroup,
+            onDeleteDomainGroup = onDeleteDomainGroup,
+            onAddDomains = onAddDomains,
+            onRenameDomain = onRenameDomain,
+            onDeleteDomain = onDeleteDomain,
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -224,7 +287,7 @@ private fun ControlsPanel(
                 Text(if (isGenerating) "Генерация..." else "Сгенерировать hosts")
             }
             TextButton(enabled = !isGenerating, onClick = onResetDomains) {
-                Text("Сбросить список")
+                Text("Включить все группы")
             }
         }
         Text(progressText, style = MaterialTheme.typography.bodySmall)
@@ -235,10 +298,18 @@ private fun ControlsPanel(
 @Composable
 private fun DomainInputArea(
     domainText: String,
+    domainGroups: List<DomainGroupUi>,
     modifier: Modifier,
-    onDomainTextChanged: (String) -> Unit
+    onDomainTextChanged: (String) -> Unit,
+    onDomainGroupEnabledChanged: (Long, Boolean) -> Unit,
+    onAddDomainGroup: (String) -> Unit,
+    onRenameDomainGroup: (Long, String) -> Unit,
+    onDeleteDomainGroup: (Long) -> Unit,
+    onAddDomains: (Long, String) -> Unit,
+    onRenameDomain: (Long, String) -> Unit,
+    onDeleteDomain: (Long) -> Unit,
 ) {
-    var isListMode by remember { mutableStateOf(false) }
+    var isListMode by remember { mutableStateOf(true) }
 
     Column(modifier = modifier) {
         TabRow(selectedTabIndex = if (isListMode) 1 else 0) {
@@ -251,55 +322,26 @@ private fun DomainInputArea(
             Tab(
                 selected = isListMode,
                 onClick = { isListMode = true },
-                text = { Text("Список") },
-                icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Список") }
+                text = { Text("Группы") },
+                icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Группы") }
             )
         }
 
         Spacer(Modifier.height(8.dp))
 
         if (isListMode) {
-            // Список дополнительно к тексту
-            val lines =
-                remember(domainText) { domainText.toInputLines().filter { it.isNotBlank() } }
-            if (lines.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Список пуст", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    itemsIndexed(lines) { index, line ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surface)
-                                .padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "${index + 1}.",
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(end = 8.dp),
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                text = line,
-                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-            }
+            DomainGroupsList(
+                groups = domainGroups,
+                modifier = Modifier.fillMaxSize(),
+                onGroupEnabledChanged = onDomainGroupEnabledChanged,
+                onAddDomainGroup = onAddDomainGroup,
+                onRenameDomainGroup = onRenameDomainGroup,
+                onDeleteDomainGroup = onDeleteDomainGroup,
+                onAddDomains = onAddDomains,
+                onRenameDomain = onRenameDomain,
+                onDeleteDomain = onDeleteDomain,
+            )
         } else {
-            // Стандартное текстовое поле
             OutlinedTextField(
                 value = domainText,
                 onValueChange = onDomainTextChanged,
@@ -309,6 +351,352 @@ private fun DomainInputArea(
             )
         }
     }
+}
+
+@Composable
+private fun DomainGroupsList(
+    groups: List<DomainGroupUi>,
+    modifier: Modifier,
+    onGroupEnabledChanged: (Long, Boolean) -> Unit,
+    onAddDomainGroup: (String) -> Unit,
+    onRenameDomainGroup: (Long, String) -> Unit,
+    onDeleteDomainGroup: (Long) -> Unit,
+    onAddDomains: (Long, String) -> Unit,
+    onRenameDomain: (Long, String) -> Unit,
+    onDeleteDomain: (Long) -> Unit,
+) {
+    var newGroupName by rememberSaveable { mutableStateOf("") }
+    Column(
+        modifier = modifier
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = newGroupName,
+                onValueChange = { newGroupName = it },
+                modifier = Modifier.weight(1f),
+                label = { Text("Новая группа") },
+                singleLine = true,
+            )
+            Button(
+                enabled = newGroupName.isNotBlank(),
+                onClick = {
+                    onAddDomainGroup(newGroupName)
+                    newGroupName = ""
+                },
+            ) {
+                Text("Добавить")
+            }
+        }
+
+        if (groups.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("Группы доменов пока не загружены", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                itemsIndexed(
+                    items = groups,
+                    key = { _, group -> group.id },
+                ) { _, group ->
+                    DomainGroupRow(
+                        group = group,
+                        onEnabledChanged = { enabled ->
+                            onGroupEnabledChanged(group.id, enabled)
+                        },
+                        onRenameGroup = { name ->
+                            onRenameDomainGroup(group.id, name)
+                        },
+                        onDeleteGroup = {
+                            onDeleteDomainGroup(group.id)
+                        },
+                        onAddDomains = { text ->
+                            onAddDomains(group.id, text)
+                        },
+                        onRenameDomain = onRenameDomain,
+                        onDeleteDomain = onDeleteDomain,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DomainGroupRow(
+    group: DomainGroupUi,
+    onEnabledChanged: (Boolean) -> Unit,
+    onRenameGroup: (String) -> Unit,
+    onDeleteGroup: () -> Unit,
+    onAddDomains: (String) -> Unit,
+    onRenameDomain: (Long, String) -> Unit,
+    onDeleteDomain: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by rememberSaveable(group.id) { mutableStateOf(false) }
+    var confirmDeleteGroup by rememberSaveable(group.id) { mutableStateOf(false) }
+    var groupName by remember(group.id, group.name) { mutableStateOf(group.name) }
+    var newDomainsText by rememberSaveable(group.id) { mutableStateOf("") }
+    val newDomainsError = remember(newDomainsText) { validateDomainsInputError(newDomainsText) }
+    val canAddDomains = newDomainsText.isNotBlank() && newDomainsError == null
+    val previewDomains = group.domains.take(3).joinToString { domain -> domain.domain }
+    val domainsSummary = buildString {
+        append("Доменов: ")
+        append(group.domains.size)
+        if (previewDomains.isNotBlank()) {
+            append(" • ")
+            append(previewDomains)
+            if (group.domains.size > 3) {
+                append("…")
+            }
+        }
+    }
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        label = "DomainGroupArrowRotation",
+    )
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Checkbox(
+                checked = group.isEnabled,
+                onCheckedChange = onEnabledChanged,
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(MaterialTheme.shapes.small)
+                    .clickable { expanded = !expanded }
+                    .padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = group.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = domainsSummary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                imageVector = Icons.Default.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier
+                    .clickable { expanded = !expanded }
+                    .rotate(arrowRotation),
+            )
+        }
+
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedTextField(
+                        value = groupName,
+                        onValueChange = { groupName = it },
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Название группы") },
+                        singleLine = true,
+                    )
+                    TextButton(
+                        enabled = groupName.isNotBlank() && groupName != group.name,
+                        onClick = { onRenameGroup(groupName) },
+                    ) {
+                        Text("Сохранить")
+                    }
+                    TextButton(onClick = { confirmDeleteGroup = true }) {
+                        Text("Удалить")
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedTextField(
+                        value = newDomainsText,
+                        onValueChange = { newDomainsText = it },
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Домены, по одному в строке") },
+                        minLines = 1,
+                        maxLines = 3,
+                        isError = newDomainsError != null,
+                        supportingText = {
+                            newDomainsError?.let { error ->
+                                Text(error)
+                            }
+                        },
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    )
+                    Button(
+                        enabled = canAddDomains,
+                        onClick = {
+                            onAddDomains(newDomainsText)
+                            newDomainsText = ""
+                        },
+                    ) {
+                        Text("Добавить")
+                    }
+                }
+
+                if (group.domains.isEmpty()) {
+                    Text(
+                        text = "В группе пока нет доменов",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        group.domains.forEach { domain ->
+                            key(domain.id) {
+                                DomainRowEditor(
+                                    domain = domain,
+                                    onRenameDomain = onRenameDomain,
+                                    onDeleteDomain = onDeleteDomain,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (confirmDeleteGroup) {
+        ConfirmDeleteDialog(
+            title = "Удалить группу?",
+            text = "Группа \"${group.name}\" и все её домены будут удалены безвозвратно.",
+            confirmButtonText = "Удалить группу",
+            onConfirm = {
+                confirmDeleteGroup = false
+                onDeleteGroup()
+            },
+            onDismiss = {
+                confirmDeleteGroup = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun DomainRowEditor(
+    domain: DomainUi,
+    onRenameDomain: (Long, String) -> Unit,
+    onDeleteDomain: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var domainText by remember(domain.id, domain.domain) { mutableStateOf(domain.domain) }
+    var confirmDeleteDomain by rememberSaveable(domain.id) { mutableStateOf(false) }
+
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedTextField(
+            value = domainText,
+            onValueChange = { domainText = it },
+            modifier = Modifier.weight(1f),
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+        )
+        TextButton(
+            enabled = domainText.isNotBlank() && domainText != domain.domain,
+            onClick = { onRenameDomain(domain.id, domainText) },
+        ) {
+            Text("OK")
+        }
+        TextButton(onClick = { confirmDeleteDomain = true }) {
+            Text("Удалить")
+        }
+    }
+
+    if (confirmDeleteDomain) {
+        ConfirmDeleteDialog(
+            title = "Удалить домен?",
+            text = "Домен \"${domain.domain}\" будет удалён из группы.",
+            confirmButtonText = "Удалить",
+            onConfirm = {
+                confirmDeleteDomain = false
+                onDeleteDomain(domain.id)
+            },
+            onDismiss = {
+                confirmDeleteDomain = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun ConfirmDeleteDialog(
+    title: String,
+    text: String,
+    confirmButtonText: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(title)
+        },
+        text = {
+            Text(text)
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(confirmButtonText)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Отмена")
+            }
+        },
+    )
 }
 
 @Composable
@@ -338,7 +726,6 @@ private fun ResultsPanel(
             )
             ResultActions(
                 result = result,
-                allResults = results,
                 onCopy = onCopy,
                 onSave = onSave
             )
@@ -366,47 +753,182 @@ private fun Header() {
 private fun PresetsPanel(
     presets: List<DnsProviderPreset>,
     selectedPresetIds: Set<String>,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     onPresetChecked: (String, Boolean) -> Unit,
+    onSelectRecommended: () -> Unit,
     onSelectAll: () -> Unit,
-    onClear: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("DNS-пресет", fontWeight = FontWeight.SemiBold)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onClear) { Text("Рекомендуемый") }
-                TextButton(onClick = onSelectAll) { Text("Сравнить все") }
-            }
+    val selectedCount = presets.count { preset ->
+        preset.id in selectedPresetIds
+    }
+    val allSelected = presets.isNotEmpty() && selectedCount == presets.size
+    val selectedPreset = if (selectedCount == 1) {
+        presets.firstOrNull { preset ->
+            preset.id in selectedPresetIds
         }
-        LazyColumn(
+    } else {
+        null
+    }
+    val selectionSummary = when {
+        presets.isEmpty() -> "Нет доступных пресетов"
+        selectedCount == 0 -> "Используется рекомендуемый режим"
+        selectedPreset != null -> selectedPreset.title
+        else -> "Выбрано $selectedCount из ${presets.size}"
+    }
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        label = "PresetsArrowRotation",
+    )
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(190.dp),
+                .clip(MaterialTheme.shapes.medium)
+                .clickable {
+                    onExpandedChange(!expanded)
+                }
+                .padding(
+                    horizontal = 4.dp,
+                    vertical = 12.dp,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            items(presets, key = { it.id }) { preset ->
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = "DNS-пресеты",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = selectionSummary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                imageVector = Icons.Default.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier.rotate(arrowRotation),
+            )
+        }
+
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Checkbox(
-                        checked = preset.id in selectedPresetIds,
-                        onCheckedChange = { checked -> onPresetChecked(preset.id, checked) },
+                    TextButton(
+                        onClick = onSelectRecommended,
+                        enabled = selectedCount > 0,
+                    ) {
+                        Text("Рекомендуемые")
+                    }
+                    TextButton(
+                        onClick = onSelectAll,
+                        enabled = presets.isNotEmpty() && !allSelected,
+                    ) {
+                        Text("Сравнить все")
+                    }
+                }
+
+                if (presets.isEmpty()) {
+                    Text(
+                        text = "Пресеты пока недоступны",
+                        modifier = Modifier.padding(
+                            horizontal = 4.dp,
+                            vertical = 12.dp,
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(preset.title, fontWeight = FontWeight.Medium)
-                        Text(
-                            "primary: ${preset.primaryDns}, check: ${preset.checkDns}",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+                } else {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        presets.forEach { preset ->
+                            key(preset.id) {
+                                PresetRow(
+                                    preset = preset,
+                                    checked = preset.id in selectedPresetIds,
+                                    onCheckedChange = { checked ->
+                                        onPresetChecked(preset.id, checked)
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
-        HorizontalDivider()
+    }
+}
+
+@Composable
+private fun PresetRow(
+    preset: DnsProviderPreset,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .toggleable(
+                value = checked,
+                role = Role.Checkbox,
+                onValueChange = onCheckedChange,
+            )
+            .padding(
+                horizontal = 4.dp,
+                vertical = 8.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = null,
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = preset.title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                text = buildString {
+                    append("Основной: ")
+                    append(preset.primaryDns)
+                    append(" • Проверка: ")
+                    append(preset.checkDns)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -440,7 +962,6 @@ private fun ResultsHeader(
 @Composable
 private fun ResultActions(
     result: GenerationResult,
-    allResults: List<GenerationResult>,
     onCopy: (String) -> Unit,
     onSave: (String, String) -> Unit,
 ) {
@@ -453,24 +974,6 @@ private fun ResultActions(
         }
         ElevatedButton(onClick = { onSave(result.outputFileName, result.outputText) }) {
             Text("Сохранить TXT")
-        }
-        ElevatedButton(
-            enabled = allResults.size > 1,
-            onClick = {
-                val csv = CsvExporter.toComparisonCsv(allResults)
-                onCopy(csv)
-            },
-        ) {
-            Text("Копировать CSV")
-        }
-        ElevatedButton(
-            enabled = allResults.size > 1,
-            onClick = {
-                val csv = CsvExporter.toComparisonCsv(allResults)
-                onSave("combined_hosts.csv", csv)
-            },
-        ) {
-            Text("Сохранить CSV")
         }
     }
 }
@@ -512,10 +1015,44 @@ private fun EmptyResult() {
     }
 }
 
-private fun String.toInputLines(): List<String> =
-    replace("\r\n", "\n")
+private fun validateDomainsInputError(text: String): String? {
+    if (text.isBlank()) {
+        return null
+    }
+    val lines = text
+        .replace("\r\n", "\n")
         .replace('\r', '\n')
         .split('\n')
+        .map { line -> line.trim() }
+        .filter { line -> line.isNotBlank() && !line.startsWith("#") }
+    if (lines.isEmpty()) {
+        return "Введите домен вида example.com"
+    }
+    val invalidLine = lines.firstOrNull { line ->
+        line.toNormalizedDomainOrNull() == null
+    }
+    return invalidLine?.let { line ->
+        "Некорректный домен: $line"
+    }
+}
+
+private fun String.toNormalizedDomainOrNull(): String? {
+    val domain = trim()
+        .substringBefore('#')
+        .trim()
+        .removePrefix("http://")
+        .removePrefix("https://")
+        .substringBefore('/')
+        .trim()
+        .lowercase()
+    return domain.takeIf { value ->
+        value.matches(DOMAIN_PATTERN)
+    }
+}
+
+private val DOMAIN_PATTERN = Regex(
+    pattern = "^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9][a-z0-9-]{1,62}$",
+)
 
 private fun GenerationResult.summaryText(): String =
     "$presetTitle → ${outputFileName}: строк ${stats.lineCount}, hosts ${stats.activeHostsCount}, unresolved ${stats.unresolvedCount}, duplicate ${stats.duplicateCount}"
@@ -523,16 +1060,36 @@ private fun GenerationResult.summaryText(): String =
 // ============================================================================
 // PREVIEWS (Доступны благодаря отделению логики от UI)
 // ============================================================================
-
-
 @Composable
 private fun HostsGeneratorScreenPreviewMocks() {
     val mockPresets = DnsProviderPreset.previewData()
+    val mockDomainGroups = listOf(
+        DomainGroupUi(
+            id = 1,
+            name = "OpenAI ChatGPT",
+            isEnabled = true,
+            domains = listOf(
+                DomainUi(1, "chatgpt.com", false),
+                DomainUi(2, "api.openai.com", false),
+                DomainUi(3, "auth.openai.com", false),
+            ),
+        ),
+        DomainGroupUi(
+            id = 2,
+            name = "Google Gemini AI",
+            isEnabled = false,
+            domains = listOf(
+                DomainUi(4, "gemini.google.com", false),
+                DomainUi(5, "aistudio.google.com", false),
+            ),
+        ),
+    )
     MaterialTheme {
         HostsGeneratorScreen(
             presets = mockPresets,
             selectedPresetIds = setOf("1"),
-            domainText = "google.com\nyoutube.com",
+            domainText = "# --- OpenAI ChatGPT ---\nchatgpt.com\napi.openai.com",
+            domainGroups = mockDomainGroups,
             dedupEnabled = true,
             isGenerating = false,
             progressText = "Готово",
@@ -544,6 +1101,13 @@ private fun HostsGeneratorScreenPreviewMocks() {
             onClearPresets = {},
             onDedupChanged = {},
             onDomainTextChanged = {},
+            onDomainGroupEnabledChanged = { _, _ -> },
+            onAddDomainGroup = {},
+            onRenameDomainGroup = { _, _ -> },
+            onDeleteDomainGroup = {},
+            onAddDomains = { _, _ -> },
+            onRenameDomain = { _, _ -> },
+            onDeleteDomain = {},
             onGenerate = {},
             onResetDomains = {},
             onSelectResult = {},

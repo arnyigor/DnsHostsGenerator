@@ -18,5 +18,5 @@ val appModule = module {
     single { HostsGenerator(get()) }
 
     // Регистрация ViewModel (специфичный DSL для поддержки жизненного цикла)
-    viewModel { HostsGeneratorViewModel(get()) }
+    viewModel { HostsGeneratorViewModel(get(), get()) }
 }

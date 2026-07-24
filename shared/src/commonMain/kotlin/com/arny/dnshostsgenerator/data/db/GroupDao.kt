@@ -16,19 +16,31 @@ interface GroupDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertDomains(domains: List<DomainEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertDomain(domain: DomainEntity): Long
+
     @Transaction
-    @Query("SELECT * FROM groups ORDER BY name")
+    @Query("SELECT * FROM groups ORDER BY id")
     fun getAllGroupsWithDomains(): Flow<List<GroupWithDomains>>
 
     @Transaction
-    @Query("SELECT * FROM groups WHERE isEnabled = 1")
+    @Query("SELECT * FROM groups WHERE isEnabled = 1 ORDER BY id")
     fun getEnabledGroupsWithDomains(): Flow<List<GroupWithDomains>>
 
     @Query("UPDATE groups SET isEnabled = :enabled WHERE id = :groupId")
     suspend fun setGroupEnabled(groupId: Long, enabled: Boolean)
 
+    @Query("UPDATE groups SET isEnabled = :enabled")
+    suspend fun setAllGroupsEnabled(enabled: Boolean)
+
+    @Query("UPDATE groups SET name = :name WHERE id = :groupId")
+    suspend fun updateGroupName(groupId: Long, name: String)
+
     @Query("DELETE FROM groups WHERE id = :groupId")
     suspend fun deleteGroup(groupId: Long)
+
+    @Query("UPDATE domains SET domain = :domain WHERE id = :domainId")
+    suspend fun updateDomain(domainId: Long, domain: String)
 
     @Query("DELETE FROM domains WHERE id = :domainId")
     suspend fun deleteDomain(domainId: Long)

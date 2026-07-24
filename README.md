@@ -1,30 +1,91 @@
-This is a Kotlin Multiplatform project targeting Android, Desktop (JVM).
+# DnsHostsGenerator
 
-* [/shared](./shared/src) is for code that will be shared across your Compose Multiplatform applications.
-  It contains several subfolders:
-  - [commonMain](./shared/src/commonMain/kotlin) is for code that’s common for all targets.
-  - Other folders are for Kotlin code that will be compiled for only the platform indicated in the folder name.
-    For example, if you want to use Apple’s CoreCrypto for the iOS part of your Kotlin app,
-    the [iosMain](./shared/src/iosMain/kotlin) folder would be the right place for such calls.
-    Similarly, if you want to edit the Desktop (JVM) specific part, the [jvmMain](./shared/src/jvmMain/kotlin)
-    folder is the appropriate location.
+Kotlin Multiplatform приложение для генерации `hosts`-файлов из групп доменов через выбранные DNS-провайдеры.
 
-### Running the apps
+## Какую боль решает
 
-Use the run configurations provided by the run widget in your IDE's toolbar. You can also use these commands and options:
+Когда сервисы частично недоступны, часто приходится вручную собирать домены, проверять их через рабочий DNS, удалять дубли и складывать результат в `hosts`. Это долго, легко ошибиться и неудобно поддерживать.
 
-- Android app: `./gradlew :androidApp:assembleDebug`
-- Desktop app:
-  - Hot reload: `./gradlew :desktopApp:hotRun --auto`
-  - Standard run: `./gradlew :desktopApp:run`
+DnsHostsGenerator делает этот сценарий быстрым:
 
-### Running tests
+- хранит домены по группам: OpenAI, Gemini, GitHub, Spotify и т.д.;
+- позволяет включать/выключать группы галочками;
+- даёт добавлять, редактировать и удалять свои группы и домены;
+- валидирует домены при вводе;
+- генерирует готовый `hosts`-файл через рекомендуемый DNS;
+- может сравнить результат через несколько DNS-пресетов;
+- показывает статистику по строкам, активным hosts, unresolved и duplicate.
 
-Use the run button in your IDE's editor gutter, or run tests using Gradle tasks:
+## Основной сценарий
 
-- Android tests: `./gradlew :shared:testAndroidHostTest`
-- Desktop tests: `./gradlew :shared:jvmTest`
+1. Открыть приложение.
+2. Включить нужные группы доменов.
+3. Оставить рекомендуемый DNS или выбрать DNS-пресеты для сравнения.
+4. Нажать **Сгенерировать hosts**.
+5. Скопировать или сохранить результат.
 
----
+## Данные доменов
 
-Learn more about [Kotlin Multiplatform](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html)…
+Приложение использует Room KMP database.
+
+При первом запуске база заполняется seed-данными из:
+
+```text
+shared/src/commonMain/composeResources/files/seed_data.sql
+```
+
+В базе есть:
+
+- группы доменов;
+- домены внутри групп;
+- флаг `isEnabled` для группы;
+- пользовательские домены с `isCustom`.
+
+Текстовая вкладка оставлена для просмотра итогового списка в старом формате:
+
+```text
+# --- Group name ---
+domain1.com
+domain2.com
+```
+
+## Модули
+
+- `shared` — общая логика, UI на Compose Multiplatform, Room database, генератор hosts.
+- `androidApp` — Android-приложение.
+- `desktopApp` — Desktop/JVM-приложение.
+
+## Сборка
+
+Android debug APK:
+
+```bash
+./gradlew :androidApp:assembleDebug
+```
+
+Desktop/JVM:
+
+```bash
+./gradlew :desktopApp:assemble
+```
+
+Проверка shared-модуля:
+
+```bash
+./gradlew :shared:assemble
+```
+
+Полная быстрая проверка:
+
+```bash
+./gradlew :shared:assemble :androidApp:assembleDebug :desktopApp:assemble
+```
+
+## Технологии
+
+- Kotlin Multiplatform
+- Compose Multiplatform
+- Android Gradle Plugin 9
+- Room KMP
+- Koin
+- dnsjava
