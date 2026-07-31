@@ -65,6 +65,7 @@ sealed interface HostsGeneratorEvent {
     data class OnDomainTextChanged(val text: String) : HostsGeneratorEvent
     data class OnDomainGroupEnabledChanged(val groupId: Long, val enabled: Boolean) :
         HostsGeneratorEvent
+    data class OnSetAllDomainGroupsEnabled(val enabled: Boolean) : HostsGeneratorEvent
 
     data class OnAddDomainGroup(val name: String) : HostsGeneratorEvent
     data class OnRenameDomainGroup(val groupId: Long, val name: String) : HostsGeneratorEvent
@@ -105,6 +106,7 @@ class HostsGeneratorViewModel(
                 event.groupId,
                 event.enabled
             )
+            is HostsGeneratorEvent.OnSetAllDomainGroupsEnabled -> setAllDomainGroupsEnabled(event.enabled)
 
             is HostsGeneratorEvent.OnAddDomainGroup -> addDomainGroup(event.name)
             is HostsGeneratorEvent.OnRenameDomainGroup -> renameDomainGroup(
@@ -132,7 +134,7 @@ class HostsGeneratorViewModel(
                 it.copy(selectedPresetIds = emptySet())
             }
 
-            HostsGeneratorEvent.OnResetDomains -> enableAllDomainGroups()
+            HostsGeneratorEvent.OnResetDomains -> setAllDomainGroupsEnabled(true)
             HostsGeneratorEvent.OnGenerate -> generateHosts()
             is HostsGeneratorEvent.OnTextCopied -> showToast("Текст скопирован")
             is HostsGeneratorEvent.OnSaveTextFile -> saveFile(event.fileName, event.content)
@@ -186,17 +188,25 @@ class HostsGeneratorViewModel(
         }
     }
 
-    private fun enableAllDomainGroups() {
+    private fun setAllDomainGroupsEnabled(enabled: Boolean) {
         viewModelScope.launch {
             runCatching {
-                groupDao.setAllGroupsEnabled(true)
+                groupDao.setAllGroupsEnabled(enabled)
             }.onFailure { error ->
-                AppLogger.e("Failed to enable all domain groups", error)
+                AppLogger.e("Failed to set all domain groups enabled: enabled=$enabled", error)
                 _state.update {
-                    it.copy(statusText = "Ошибка сброса групп: ${error.message ?: error::class.simpleName}")
+                    it.copy(statusText = "Ошибка обновления групп: ${error.message ?: error::class.simpleName}")
                 }
             }.onSuccess {
-                _state.update { it.copy(statusText = "Все группы доменов включены") }
+                _state.update {
+                    it.copy(
+                        statusText = if (enabled) {
+                            "Все группы доменов включены"
+                        } else {
+                            "Все группы доменов выключены"
+                        }
+                    )
+                }
             }
         }
     }

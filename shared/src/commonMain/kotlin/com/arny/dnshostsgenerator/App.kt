@@ -13,11 +13,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import com.arny.dnshostsgenerator.navigation.AppNavigation
+import com.arny.dnshostsgenerator.nextdns.NextDnsImportViewModel
 import com.arny.dnshostsgenerator.platform.Notify
-import com.arny.dnshostsgenerator.presentation.HostsGeneratorEvent
-import com.arny.dnshostsgenerator.presentation.HostsGeneratorScreen
 import com.arny.dnshostsgenerator.presentation.HostsGeneratorViewModel
 import com.arny.dnshostsgenerator.presentation.UiEffect
 import org.koin.compose.viewmodel.koinViewModel
@@ -31,21 +29,23 @@ fun App() {
                 .safeContentPadding()
                 .fillMaxSize(),
         ) {
-            HostsGeneratorApp()
+            AppContent()
         }
     }
 }
 
 @Composable
-fun HostsGeneratorApp(
-    viewModel: HostsGeneratorViewModel = koinViewModel()
-) {
-    val state by viewModel.state.collectAsState()
-    val clipboardManager = LocalClipboardManager.current
+fun AppContent() {
+    val hostsGeneratorViewModel: HostsGeneratorViewModel = koinViewModel()
+    val hostsGeneratorState by hostsGeneratorViewModel.state.collectAsState()
+
+    val nextDnsImportViewModel: NextDnsImportViewModel = koinViewModel()
+    val nextDnsImportState by nextDnsImportViewModel.state.collectAsState()
+
     var toastMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
-        viewModel.effect.collect { effect ->
+        hostsGeneratorViewModel.effect.collect { effect ->
             when (effect) {
                 is UiEffect.ShowToast -> toastMessage = effect.message
             }
@@ -59,70 +59,10 @@ fun HostsGeneratorApp(
         }
     }
 
-    HostsGeneratorScreen(
-        presets = state.presets,
-        selectedPresetIds = state.selectedPresetIds,
-        domainText = state.domainText,
-        domainGroups = state.domainGroups,
-        dedupEnabled = state.dedupEnabled,
-        isGenerating = state.isGenerating,
-        progressText = state.progressText,
-        statusText = state.statusText,
-        results = state.results,
-        selectedResultIndex = state.selectedResultIndex,
-
-        onPresetChecked = { id, checked ->
-            viewModel.onEvent(
-                HostsGeneratorEvent.OnPresetChecked(
-                    id,
-                    checked
-                )
-            )
-        },
-        onSelectAllPresets = { viewModel.onEvent(HostsGeneratorEvent.OnSelectAllPresets) },
-        onClearPresets = { viewModel.onEvent(HostsGeneratorEvent.OnClearPresets) },
-        onDedupChanged = { viewModel.onEvent(HostsGeneratorEvent.OnDedupChanged(it)) },
-        onDomainTextChanged = { viewModel.onEvent(HostsGeneratorEvent.OnDomainTextChanged(it)) },
-        onDomainGroupEnabledChanged = { groupId, enabled ->
-            viewModel.onEvent(
-                HostsGeneratorEvent.OnDomainGroupEnabledChanged(
-                    groupId,
-                    enabled,
-                )
-            )
-        },
-        onAddDomainGroup = { name ->
-            viewModel.onEvent(HostsGeneratorEvent.OnAddDomainGroup(name))
-        },
-        onRenameDomainGroup = { groupId, name ->
-            viewModel.onEvent(HostsGeneratorEvent.OnRenameDomainGroup(groupId, name))
-        },
-        onDeleteDomainGroup = { groupId ->
-            viewModel.onEvent(HostsGeneratorEvent.OnDeleteDomainGroup(groupId))
-        },
-        onAddDomains = { groupId, text ->
-            viewModel.onEvent(HostsGeneratorEvent.OnAddDomains(groupId, text))
-        },
-        onRenameDomain = { domainId, domain ->
-            viewModel.onEvent(HostsGeneratorEvent.OnRenameDomain(domainId, domain))
-        },
-        onDeleteDomain = { domainId ->
-            viewModel.onEvent(HostsGeneratorEvent.OnDeleteDomain(domainId))
-        },
-        onGenerate = { viewModel.onEvent(HostsGeneratorEvent.OnGenerate) },
-        onResetDomains = { viewModel.onEvent(HostsGeneratorEvent.OnResetDomains) },
-        onSelectResult = { viewModel.onEvent(HostsGeneratorEvent.OnSelectResult(it)) },
-        onSaveTextFile = { fileName, content ->
-            viewModel.onEvent(
-                HostsGeneratorEvent.OnSaveTextFile(
-                    fileName,
-                    content
-                )
-            )
-        },
-        onCopyText = { text ->
-            clipboardManager.setText(AnnotatedString(text))
-            viewModel.onEvent(HostsGeneratorEvent.OnTextCopied)
-        }
+    AppNavigation(
+        hostsGeneratorState = hostsGeneratorState,
+        onHostsGeneratorEvent = hostsGeneratorViewModel::onEvent,
+        nextDnsImportState = nextDnsImportState,
+        onNextDnsImportEvent = nextDnsImportViewModel::onEvent,
     )
 }

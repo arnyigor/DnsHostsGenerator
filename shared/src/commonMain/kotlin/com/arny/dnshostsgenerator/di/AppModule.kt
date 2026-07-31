@@ -3,6 +3,8 @@ package com.arny.dnshostsgenerator.di
 import com.arny.dnshostsgenerator.data.db.AppDatabase
 import com.arny.dnshostsgenerator.data.db.createAppDatabase
 import com.arny.dnshostsgenerator.generator.HostsGenerator
+import com.arny.dnshostsgenerator.nextdns.NextDnsClient
+import com.arny.dnshostsgenerator.nextdns.NextDnsImportViewModel
 import com.arny.dnshostsgenerator.presentation.HostsGeneratorViewModel
 import com.arny.dnshostsgenerator.resolver.createDnsResolver
 import org.koin.core.module.dsl.viewModel
@@ -17,6 +19,10 @@ val appModule = module {
     // get() автоматически подставит DnsResolver, который мы зарегистрировали выше
     single { HostsGenerator(get()) }
 
+    // NextDNS integration
+    single { NextDnsClient() }
+
     // Регистрация ViewModel (специфичный DSL для поддержки жизненного цикла)
     viewModel { HostsGeneratorViewModel(get(), get()) }
+    viewModel { NextDnsImportViewModel(get()) }
 }

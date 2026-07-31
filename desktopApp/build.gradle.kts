@@ -20,9 +20,9 @@ compose.desktop {
         mainClass = "com.arny.dnshostsgenerator.MainKt"
 
         nativeDistributions {
-            targetFormats(TargetFormat.Msi)
+            targetFormats(TargetFormat.Exe, TargetFormat.Msi)
             packageName = "DnsHostsGenerator"
-            packageVersion = "1.0.0"
+            packageVersion = "1.2.0"
             includeAllModules = true
         }
     }
