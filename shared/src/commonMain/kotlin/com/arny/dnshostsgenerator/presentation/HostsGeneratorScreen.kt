@@ -1173,7 +1173,7 @@ private val DOMAIN_PATTERN = Regex(
 )
 
 private fun GenerationResult.summaryText(): String =
-    "$presetTitle → ${outputFileName}: строк ${stats.lineCount}, hosts ${stats.activeHostsCount}, unresolved ${stats.unresolvedCount}, duplicate ${stats.duplicateCount}"
+    "$presetTitle → ${outputFileName}: строк ${stats.lineCount}, hosts ${stats.activeHostsCount}, forwarded ${stats.forwardedCount}, unresolved ${stats.unresolvedCount}, duplicate ${stats.duplicateCount}"
 
 // ============================================================================
 // PREVIEWS (Доступны благодаря отделению логики от UI)

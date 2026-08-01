@@ -4,6 +4,16 @@ data class DnsProviderPreset(
     val id: String,
     val title: String,
     val primaryDns: String,
+    /**
+     * Hostname для DNS-over-TLS (порт 853). Если null — используется [primaryDns].
+     * DoT обходит перехват UDP/TCP:53 на сетях с VPN/DNS-прокси.
+     */
+    val dotHost: String? = null,
+    /**
+     * Разрешить TLS-соединение с некорректным сертификатом (для DoT).
+     * Нужно провайдерам с просроченными сертификатами: dns.mafioznik.xyz, free.shecan.ir.
+     */
+    val allowInvalidTls: Boolean = false,
     val checkDns: String = "8.8.8.8",
     val outputFileName: String,
     val enabledByDefault: Boolean = true,
@@ -59,7 +69,13 @@ enum class IpSelectionStrategy {
 
 data class GenerateHostsRequest(
     val primaryDns: String,
+    /** Hostname для DNS-over-TLS по primary-резолверу (см. [DnsProviderPreset.dotHost]). */
+    val primaryDotHost: String? = null,
+    val primaryAllowInvalidTls: Boolean = false,
     val checkDns: String,
+    /** Hostname для DNS-over-TLS по проверочному резолверу (8.8.8.8 -> dns.google:853). */
+    val checkDotHost: String = "dns.google",
+    val checkAllowInvalidTls: Boolean = false,
     val inputLines: List<String>,
     val outputFileName: String,
     val dedupEnabled: Boolean,
@@ -94,9 +110,7 @@ sealed interface HostLine {
         val primaryIps: List<String>,
         val checkIps: List<String>,
     ) : HostLine {
-        override fun toOutputLine(): String = primaryIps.firstOrNull()
-            ?.let { ip -> "$ip $domain" }
-            ?: "#unresolvedDomain $domain"
+        override fun toOutputLine(): String = "#forwarded $domain"
     }
 
     data class Unresolved(
@@ -119,10 +133,20 @@ data class GenerationStats(
     val duplicateCount: Int,
 ) {
     val activeHostsCount: Int
-        get() = resolvedCount + forwardedCount
+        get() = resolvedCount
 
     val domainResultCount: Int
         get() = resolvedCount + forwardedCount + unresolvedCount + duplicateCount
+
+    /**
+     * Признак вероятного перехвата DNS-запросов: почти все домены помечены #forwarded,
+     * т.е. primary и check-резолверы вернули одинаковые IP (VPN/DNS-прокси).
+     */
+    val suspiciousForwarding: Boolean
+        get() {
+            val meaningful = resolvedCount + forwardedCount
+            return meaningful > 0 && forwardedCount.toDouble() / meaningful >= 0.9
+        }
 }
 
 data class GenerationResult(

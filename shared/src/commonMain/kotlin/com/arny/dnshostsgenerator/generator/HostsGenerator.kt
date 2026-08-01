@@ -6,6 +6,7 @@ import com.arny.dnshostsgenerator.domain.GenerationResult
 import com.arny.dnshostsgenerator.domain.GenerationStats
 import com.arny.dnshostsgenerator.domain.HostLine
 import com.arny.dnshostsgenerator.logging.AppLogger
+import com.arny.dnshostsgenerator.resolver.DnsQueryOptions
 import com.arny.dnshostsgenerator.resolver.DnsResolver
 
 class HostsGenerator(
@@ -64,7 +65,15 @@ class HostsGenerator(
             }
 
             val primaryIps = runCatching {
-                dnsResolver.resolveA(domain, request.primaryDns, request.timeoutMillis)
+                dnsResolver.resolveA(
+                    domain = domain,
+                    dnsServer = request.primaryDns,
+                    timeoutMillis = request.timeoutMillis,
+                    options = DnsQueryOptions(
+                        dotHost = request.primaryDotHost,
+                        allowInvalidTls = request.primaryAllowInvalidTls,
+                    ),
+                )
             }.onFailure { error ->
                 AppLogger.e(
                     "Primary DNS resolve failed: line=$lineCount, domain=$domain, dns=${request.primaryDns}",
@@ -84,7 +93,15 @@ class HostsGenerator(
 
             val firstIp = primaryIps.first()
             val checkIps = runCatching {
-                dnsResolver.resolveA(domain, request.checkDns, request.timeoutMillis)
+                dnsResolver.resolveA(
+                    domain = domain,
+                    dnsServer = request.checkDns,
+                    timeoutMillis = request.timeoutMillis,
+                    options = DnsQueryOptions(
+                        dotHost = request.checkDotHost,
+                        allowInvalidTls = request.checkAllowInvalidTls,
+                    ),
+                )
             }.onFailure { error ->
                 AppLogger.e(
                     "Check DNS resolve failed, domain will be treated as resolved: " +
@@ -97,8 +114,8 @@ class HostsGenerator(
             if (checkIps.isNotEmpty() && hasCommonIp) {
                 forwardedCount++
                 AppLogger.d(
-                    "Forwarded match converted to active hosts line: line=$lineCount, " +
-                        "domain=$domain, ip=$firstIp, primaryIps=${primaryIps.joinToString()}, " +
+                    "Forwarded match excluded from hosts output: line=$lineCount, " +
+                        "domain=$domain, primaryIps=${primaryIps.joinToString()}, " +
                         "checkIps=${checkIps.joinToString()}",
                 )
                 outputLines += HostLine.Forwarded(

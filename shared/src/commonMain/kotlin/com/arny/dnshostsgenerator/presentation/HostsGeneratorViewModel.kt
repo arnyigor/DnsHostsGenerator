@@ -51,7 +51,7 @@ data class HostsGeneratorState(
 ) {
     val selectedPresets: List<DnsProviderPreset>
         get() = if (selectedPresetIds.isEmpty()) {
-            presets.filter { it.id == BuiltInDnsPresets.recommendedId }
+            presets.filter { it.id == BuiltInDnsPresets.RECOMMENDED_ID }
         } else {
             presets.filter { it.id in selectedPresetIds }
         }
@@ -362,6 +362,8 @@ class HostsGeneratorViewModel(
                         presetTitle = preset.title,
                         request = GenerateHostsRequest(
                             primaryDns = preset.primaryDns,
+                            primaryDotHost = preset.dotHost,
+                            primaryAllowInvalidTls = preset.allowInvalidTls,
                             checkDns = preset.checkDns,
                             inputLines = inputLines,
                             outputFileName = preset.outputFileName,
@@ -394,13 +396,22 @@ class HostsGeneratorViewModel(
                 _state.update { it.copy(statusText = "Ошибка генерации: ${error.message ?: error::class.simpleName}") }
             }.onSuccess {
                 if (generatedResults.isNotEmpty()) {
+                    val hasSuspiciousForwarding = generatedResults.any { it.stats.suspiciousForwarding }
                     _state.update {
                         it.copy(
-                            statusText = if (generatedResults.size == 1) {
-                                "Готов один hosts-файл: ${generatedResults.first().outputFileName}"
-                            } else {
-                                "Сравнение завершено: ${generatedResults.size} вариантов"
-                            }
+                            statusText = buildString {
+                                if (generatedResults.size == 1) {
+                                    append("Готов один hosts-файл: ${generatedResults.first().outputFileName}")
+                                } else {
+                                    append("Сравнение завершено: ${generatedResults.size} вариантов")
+                                }
+                                if (hasSuspiciousForwarding) {
+                                    append(
+                                        " | Внимание: почти все домены помечены #forwarded — DNS-запросы " +
+                                            "могут перехватываться (VPN/провайдер). Результат недостоверен.",
+                                    )
+                                }
+                            },
                         )
                     }
                 }
