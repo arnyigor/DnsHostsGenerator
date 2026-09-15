@@ -5,8 +5,8 @@ package com.arny.dnshostsgenerator.resolver
  *
  * @param dotHost         hostname для DNS-over-TLS (порт 853, RFC 7858). Если null,
  *                        резолвер попытается использовать сам [dnsServer] как DoT-host.
- *                        DoT обходит прозрачный перехват UDP/TCP:53 (VPN-антиблокировщики,
- *                        DNS-прокси операторов), при котором primary и check-резолверы
+ *                        DoT уменьшает влияние локального перехвата DNS-запросов UDP/TCP:53
+ *                        (DNS-прокси, сетевые фильтры), при котором primary и check-резолверы
  *                        возвращают одинаковые IP и все домены ошибочно уходят в #forwarded.
  * @param allowInvalidTls разрешить TLS-соединение с некорректным сертификатом
  *                        (нужно для провайдеров с просроченными сертификатами:

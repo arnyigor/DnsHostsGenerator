@@ -63,8 +63,8 @@ private class DnsJavaResolver : DnsResolver {
         timeoutMillis: Int,
         options: DnsQueryOptions,
     ): List<String> {
-        // Сначала пробуем DNS-over-TLS: он обходит прозрачный перехват UDP/TCP:53
-        // (VPN-антиблокировщики, DNS-прокси операторов и т.п.), из-за которого
+        // Сначала пробуем DNS-over-TLS: он уменьшает влияние локального перехвата
+        // DNS-запросов UDP/TCP:53 (DNS-прокси, сетевые фильтры), из-за которого
         // primary и check-резолверы возвращают одинаковые IP и всё уходит в #forwarded.
         val dotHost = options.dotHost ?: dnsServer
         val dotResult = runCatching {

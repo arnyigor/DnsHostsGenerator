@@ -2,6 +2,15 @@ package com.arny.dnshostsgenerator.data
 
 import com.arny.dnshostsgenerator.domain.DnsProviderPreset
 
+/**
+ * Встроенный список публичных DNS-резолверов для сравнения результатов резолвинга.
+ *
+ * Список — это набор адресов для диагностики DNS, а не «методов доступа»:
+ * приложение лишь отправляет A-запросы в каждый резолвер и сравнивает IP.
+ * `allowInvalidTls` включается только там, где у провайдера фактический
+ * (просроченный/некорректный) TLS-сертификат — это техническая необходимость
+ * для DoT-соединения, а не отключение проверки по умолчанию.
+ */
 object BuiltInDnsPresets {
     const val RECOMMENDED_ID: String = "dns_comss_one"
 
