@@ -84,6 +84,8 @@ data class GenerateHostsRequest(
     val preserveComments: Boolean = true,
     val preserveBlankLines: Boolean = true,
     val timeoutMillis: Int = 5_000,
+    /** Сколько доменов резолвится одновременно. */
+    val concurrency: Int = 16,
 )
 
 sealed interface HostLine {

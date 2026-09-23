@@ -107,7 +107,10 @@ private class DnsJavaResolver : DnsResolver {
             }
 
             val query = Message()
-            query.header.id = (System.currentTimeMillis() and 0xFFFF).toInt()
+            // Случайный ID (а не от времени): параллельные запросы в одну миллисекунду
+            // иначе получают одинаковый ID, а сам ID становится предсказуемым.
+            val queryId = SECURE_RANDOM.nextInt(0x10000)
+            query.header.id = queryId
             query.header.setFlag(Flags.RD.toInt())
             query.addRecord(
                 Record.newRecord(Name.fromString("$domain."), Type.A, DClass.IN),
@@ -125,6 +128,9 @@ private class DnsJavaResolver : DnsResolver {
             val buffer = ByteArray(length)
             input.readFully(buffer)
             val response = Message(buffer)
+            check(response.header.id == queryId) {
+                "DoT response id mismatch: expected=$queryId, actual=${response.header.id}"
+            }
 
             val ips = response.getSection(Section.ANSWER)
                 .filterIsInstance<ARecord>()
@@ -149,6 +155,8 @@ private class DnsJavaResolver : DnsResolver {
     }
 
     private companion object {
+        val SECURE_RANDOM = SecureRandom()
+
         /** Trust-all фабрика для провайдеров с проблемным сертификатом (mafioznik, free.shecan). */
         val RELAXED_SOCKET_FACTORY: SSLSocketFactory by lazy {
             val trustAll = arrayOf<TrustManager>(
