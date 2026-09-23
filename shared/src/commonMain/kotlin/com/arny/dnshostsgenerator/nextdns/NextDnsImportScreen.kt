@@ -1,6 +1,13 @@
 package com.arny.dnshostsgenerator.nextdns
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -155,23 +162,8 @@ fun NextDnsImportScreen(
 
             AnimatedVisibility(state.isCreatingAccount || state.isImporting) {
                 ImportProgressCard(
-                    isCreatingAccount = state.isCreatingAccount,
-                    progress = state.importProgress,
-                    total = state.importTotal,
-                    currentDomain = state.currentDomain,
-                    imported = state.importedCount,
-                    failed = state.failedCount,
-                    skippedExisting = state.skippedExistingCount,
-                    retrying = state.retryingCount,
-                    retriesAttempted = state.retriesAttempted,
-                    currentBurst = state.currentBurst,
-                    totalBursts = state.totalBursts,
-                    mode = state.importMode,
-                    phase = state.importPhase,
-                    cooldownRemainingSeconds = state.cooldownRemainingSeconds,
-                    elapsedText = state.elapsedText,
-                    etaText = state.etaText,
-                    speedText = state.speedText,
+                    state = state,
+                    onCancel = null,
                 )
             }
 
@@ -386,91 +378,107 @@ private fun ImportActionRow(
     }
 }
 
+/**
+ * Подробный прогресс импорта: фаза, всплески, счётчики, скорость и ETA.
+ * Используется на полном экране и в быстрой карточке на главном экране.
+ */
 @Composable
-private fun ImportProgressCard(
-    isCreatingAccount: Boolean,
-    progress: Int,
-    total: Int,
-    currentDomain: String?,
-    imported: Int,
-    failed: Int,
-    skippedExisting: Int,
-    retrying: Int,
-    retriesAttempted: Int,
-    currentBurst: Int,
-    totalBursts: Int,
-    mode: String,
-    phase: ImportProgressPhase,
-    cooldownRemainingSeconds: Int,
-    elapsedText: String,
-    etaText: String,
-    speedText: String,
+internal fun ImportProgressCard(
+    state: NextDnsImportState,
+    onCancel: (() -> Unit)?,
+    modifier: Modifier = Modifier,
 ) {
-    val containerColor = when (phase) {
-        ImportProgressPhase.CreatingAccount -> MaterialTheme.colorScheme.primaryContainer
-        ImportProgressPhase.Processing -> MaterialTheme.colorScheme.primaryContainer
-        ImportProgressPhase.Retrying -> MaterialTheme.colorScheme.errorContainer
-        ImportProgressPhase.Resting -> MaterialTheme.colorScheme.tertiaryContainer
-        ImportProgressPhase.Verifying -> MaterialTheme.colorScheme.secondaryContainer
-        ImportProgressPhase.Completed -> MaterialTheme.colorScheme.primaryContainer
+    val phase = state.importPhase
+    val total = state.importTotal
+    val progress = state.importProgress
+    val targetColor = when {
+        state.isCancelling -> MaterialTheme.colorScheme.surfaceVariant
+        else -> when (phase) {
+            ImportProgressPhase.CreatingAccount,
+            ImportProgressPhase.Processing,
+            ImportProgressPhase.Completed -> MaterialTheme.colorScheme.primaryContainer
+            ImportProgressPhase.Retrying -> MaterialTheme.colorScheme.errorContainer
+            ImportProgressPhase.Resting -> MaterialTheme.colorScheme.tertiaryContainer
+            ImportProgressPhase.Verifying -> MaterialTheme.colorScheme.secondaryContainer
+        }
     }
-    val progressFraction = if (total > 0) progress.toFloat() / total else 0f
+    val containerColor by animateColorAsState(targetColor, animationSpec = tween(400))
+    val progressFraction by animateFloatAsState(
+        targetValue = if (total > 0) progress.toFloat() / total else 0f,
+        animationSpec = tween(300),
+    )
+    val indeterminate = state.isCreatingAccount || total == 0
 
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+    ElevatedCard(modifier = modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(containerColor)
-                .padding(16.dp),
+                .padding(16.dp)
+                .animateContentSize(),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = when {
+                            state.isCancelling -> "Отмена импорта…"
+                            state.isCreatingAccount -> "Создание временного аккаунта NextDNS…"
+                            else -> "Импорт записей NextDNS"
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    AnimatedContent(targetState = phaseText(state), label = "phase") { text ->
+                        Text(text = text, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                if (onCancel != null) {
+                    OutlinedButton(enabled = !state.isCancelling, onClick = onCancel) {
+                        Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Стоп")
+                    }
+                }
+            }
+            if (state.importMode.isNotBlank()) {
                 Text(
-                    text = if (isCreatingAccount) "Создание временного аккаунта NextDNS..." else "Импорт записей NextDNS",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
+                    text = "Режим: ${state.importMode}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
-            Text(
-                text = when (phase) {
-                    ImportProgressPhase.CreatingAccount -> "Подготовка аккаунта"
-                    ImportProgressPhase.Processing -> "Всплеск $currentBurst/$totalBursts — обработка"
-                    ImportProgressPhase.Retrying -> "Повтор запроса${if (cooldownRemainingSeconds > 0) ": ${cooldownRemainingSeconds}с" else ""}"
-                    ImportProgressPhase.Resting -> "Отдых между всплесками: ${cooldownRemainingSeconds}с"
-                    ImportProgressPhase.Verifying -> "Проверка добавленных записей"
-                    ImportProgressPhase.Completed -> "Завершено"
-                },
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                text = "Режим: $mode",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (indeterminate) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            } else {
+                LinearProgressIndicator(
+                    progress = { progressFraction },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
 
-            LinearProgressIndicator(
-                progress = progressFraction,
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Text(
-                text = "$progress / $total (${(progressFraction * 100).toInt()}%)  ✅ $imported  ❌ $failed  ⏭ $skippedExisting  🔄 $retrying",
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.Medium,
-            )
-            Text(
-                text = "Прошло: $elapsedText • Осталось: $etaText • Скорость: $speedText • Повторов: $retriesAttempted",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            if (totalBursts > 0) {
+            if (!state.isCreatingAccount) {
                 Text(
-                    text = "Всплесков: $currentBurst / $totalBursts",
+                    text = "$progress / $total (${(progressFraction * 100).toInt()}%)  ✅ ${state.importedCount}  " +
+                        "❌ ${state.failedCount}  ⏭ ${state.skippedExistingCount}  🔄 ${state.retryingCount}",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = "Прошло: ${state.elapsedText} • Осталось: ${state.etaText} • " +
+                        "Скорость: ${state.speedText} • Повторов: ${state.retriesAttempted}",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                if (state.totalBursts > 0) {
+                    Text(
+                        text = "Всплесков: ${state.currentBurst} / ${state.totalBursts}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
-            currentDomain?.let {
+            state.currentDomain?.let {
                 Text(
                     text = "Текущий: $it",
                     style = MaterialTheme.typography.bodySmall,
@@ -480,6 +488,18 @@ private fun ImportProgressCard(
                 )
             }
         }
+    }
+}
+
+private fun phaseText(state: NextDnsImportState): String {
+    val cooldown = state.cooldownRemainingSeconds
+    return when (state.importPhase) {
+        ImportProgressPhase.CreatingAccount -> "Подготовка аккаунта"
+        ImportProgressPhase.Processing -> "Всплеск ${state.currentBurst}/${state.totalBursts} — обработка"
+        ImportProgressPhase.Retrying -> "Повтор запроса${if (cooldown > 0) ": ${cooldown}с" else ""}"
+        ImportProgressPhase.Resting -> "Отдых между всплесками: ${cooldown}с"
+        ImportProgressPhase.Verifying -> "Проверка добавленных записей"
+        ImportProgressPhase.Completed -> "Завершено"
     }
 }
 

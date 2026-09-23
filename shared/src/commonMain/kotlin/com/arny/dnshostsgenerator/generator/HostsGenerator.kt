@@ -8,39 +8,57 @@ import com.arny.dnshostsgenerator.domain.HostLine
 import com.arny.dnshostsgenerator.logging.AppLogger
 import com.arny.dnshostsgenerator.resolver.DnsQueryOptions
 import com.arny.dnshostsgenerator.resolver.DnsResolver
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 
 class HostsGenerator(
     private val dnsResolver: DnsResolver,
 ) {
+    /** Результат DNS-запросов для одного уникального домена. */
+    private data class DomainLookup(
+        val primaryIps: List<String>,
+        val checkIps: List<String>,
+    )
+
     suspend fun generate(
         presetTitle: String,
         request: GenerateHostsRequest,
         onProgress: ((GenerationProgress) -> Unit)? = null,
     ): GenerationResult {
-        val outputLines = mutableListOf<HostLine>()
-        val processedDomains = mutableSetOf<String>()
         val totalLines = request.inputLines.size
 
+        AppLogger.d(
+            "Generation started: preset=$presetTitle, primaryDns=${request.primaryDns}, " +
+                "checkDns=${request.checkDns}, lines=$totalLines, dedup=${request.dedupEnabled}, " +
+                "concurrency=${request.concurrency}",
+        )
+
+        // Этап 1: параллельно резолвим каждый уникальный домен ровно один раз.
+        // Раньше домены обрабатывались строго последовательно, и на сотнях доменов
+        // с таймаутами генерация занимала минуты.
+        val uniqueDomains = request.inputLines
+            .filterNot { it.isBlank() || it.trimStart().startsWith("#") }
+            .map { it.trim() }
+            .distinct()
+        val lookups = resolveAll(uniqueDomains, request, onProgress)
+
+        // Этап 2: собираем вывод в исходном порядке строк с прежней семантикой.
+        val outputLines = mutableListOf<HostLine>()
+        val processedDomains = mutableSetOf<String>()
         var lineCount = 0
         var resolvedCount = 0
         var forwardedCount = 0
         var unresolvedCount = 0
         var duplicateCount = 0
 
-        AppLogger.d(
-            "Generation started: preset=$presetTitle, primaryDns=${request.primaryDns}, " +
-                "checkDns=${request.checkDns}, lines=$totalLines, dedup=${request.dedupEnabled}",
-        )
-
         for (line in request.inputLines) {
             lineCount++
-            onProgress?.invoke(
-                GenerationProgress(
-                    processedLines = lineCount,
-                    totalLines = totalLines,
-                    currentDomain = line.trim().takeIf { it.isNotEmpty() && !it.startsWith("#") },
-                ),
-            )
 
             if (line.isBlank()) {
                 if (request.preserveBlankLines) {
@@ -64,23 +82,8 @@ class HostsGenerator(
                 continue
             }
 
-            val primaryIps = runCatching {
-                dnsResolver.resolveA(
-                    domain = domain,
-                    dnsServer = request.primaryDns,
-                    timeoutMillis = request.timeoutMillis,
-                    options = DnsQueryOptions(
-                        dotHost = request.primaryDotHost,
-                        allowInvalidTls = request.primaryAllowInvalidTls,
-                    ),
-                )
-            }.onFailure { error ->
-                AppLogger.e(
-                    "Primary DNS resolve failed: line=$lineCount, domain=$domain, dns=${request.primaryDns}",
-                    error,
-                )
-            }.getOrDefault(emptyList())
-
+            val lookup = lookups.getValue(domain)
+            val primaryIps = lookup.primaryIps
             if (primaryIps.isEmpty()) {
                 unresolvedCount++
                 outputLines += HostLine.Unresolved(domain)
@@ -91,25 +94,7 @@ class HostsGenerator(
             // as processed only after a successful primary A-record lookup.
             processedDomains += domain
 
-            val firstIp = primaryIps.first()
-            val checkIps = runCatching {
-                dnsResolver.resolveA(
-                    domain = domain,
-                    dnsServer = request.checkDns,
-                    timeoutMillis = request.timeoutMillis,
-                    options = DnsQueryOptions(
-                        dotHost = request.checkDotHost,
-                        allowInvalidTls = request.checkAllowInvalidTls,
-                    ),
-                )
-            }.onFailure { error ->
-                AppLogger.e(
-                    "Check DNS resolve failed, domain will be treated as resolved: " +
-                        "line=$lineCount, domain=$domain, dns=${request.checkDns}",
-                    error,
-                )
-            }.getOrDefault(emptyList())
-
+            val checkIps = lookup.checkIps
             val hasCommonIp = checkIps.any { it in primaryIps }
             if (checkIps.isNotEmpty() && hasCommonIp) {
                 forwardedCount++
@@ -127,7 +112,7 @@ class HostsGenerator(
                 resolvedCount++
                 outputLines += HostLine.Resolved(
                     domain = domain,
-                    ip = firstIp,
+                    ip = primaryIps.first(),
                     allPrimaryIps = primaryIps,
                 )
             }
@@ -153,5 +138,85 @@ class HostsGenerator(
             lines = outputLines,
             stats = stats,
         )
+    }
+
+    private suspend fun resolveAll(
+        domains: List<String>,
+        request: GenerateHostsRequest,
+        onProgress: ((GenerationProgress) -> Unit)?,
+    ): Map<String, DomainLookup> = coroutineScope {
+        val semaphore = Semaphore(request.concurrency.coerceAtLeast(1))
+        val progressMutex = Mutex()
+        var completed = 0
+
+        onProgress?.invoke(
+            GenerationProgress(processedLines = 0, totalLines = domains.size, currentDomain = null),
+        )
+
+        domains.map { domain ->
+            async {
+                val lookup = semaphore.withPermit { lookup(domain, request) }
+                progressMutex.withLock {
+                    completed++
+                    onProgress?.invoke(
+                        GenerationProgress(
+                            processedLines = completed,
+                            totalLines = domains.size,
+                            currentDomain = domain,
+                        ),
+                    )
+                }
+                domain to lookup
+            }
+        }.awaitAll().toMap()
+    }
+
+    private suspend fun lookup(domain: String, request: GenerateHostsRequest): DomainLookup {
+        val primaryIps = resolveSafely(
+            domain = domain,
+            dnsServer = request.primaryDns,
+            timeoutMillis = request.timeoutMillis,
+            options = DnsQueryOptions(
+                dotHost = request.primaryDotHost,
+                allowInvalidTls = request.primaryAllowInvalidTls,
+            ),
+            failureMessage = "Primary DNS resolve failed",
+        )
+        if (primaryIps.isEmpty()) {
+            return DomainLookup(primaryIps = emptyList(), checkIps = emptyList())
+        }
+
+        val checkIps = resolveSafely(
+            domain = domain,
+            dnsServer = request.checkDns,
+            timeoutMillis = request.timeoutMillis,
+            options = DnsQueryOptions(
+                dotHost = request.checkDotHost,
+                allowInvalidTls = request.checkAllowInvalidTls,
+            ),
+            failureMessage = "Check DNS resolve failed, domain will be treated as resolved",
+        )
+        return DomainLookup(primaryIps = primaryIps, checkIps = checkIps)
+    }
+
+    private suspend fun resolveSafely(
+        domain: String,
+        dnsServer: String,
+        timeoutMillis: Int,
+        options: DnsQueryOptions,
+        failureMessage: String,
+    ): List<String> = try {
+        dnsResolver.resolveA(
+            domain = domain,
+            dnsServer = dnsServer,
+            timeoutMillis = timeoutMillis,
+            options = options,
+        )
+    } catch (error: CancellationException) {
+        // Не глотаем отмену: иначе остановка генерации (уход с экрана) не прерывает резолвинг.
+        throw error
+    } catch (error: Exception) {
+        AppLogger.e("$failureMessage: domain=$domain, dns=$dnsServer", error)
+        emptyList()
     }
 }

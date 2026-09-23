@@ -4,6 +4,8 @@ import com.arny.dnshostsgenerator.domain.GenerateHostsRequest
 import com.arny.dnshostsgenerator.domain.GenerationStats
 import com.arny.dnshostsgenerator.resolver.DnsQueryOptions
 import com.arny.dnshostsgenerator.resolver.DnsResolver
+import com.arny.dnshostsgenerator.domain.GenerationProgress
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -131,6 +133,54 @@ class HostsGeneratorTest {
     }
 
     @Test
+    fun generate_resolvesDomainsConcurrentlyAndKeepsInputOrder() = runBlocking {
+        val resolver = ConcurrencyTrackingFake()
+        val generator = HostsGenerator(dnsResolver = resolver)
+        val domains = (1..20).map { "d$it.example" }
+        val progress = mutableListOf<GenerationProgress>()
+
+        val result = generator.generate(
+            presetTitle = "Test DNS",
+            request = GenerateHostsRequest(
+                primaryDns = "1.1.1.1",
+                checkDns = "8.8.8.8",
+                inputLines = domains,
+                outputFileName = "hosts.txt",
+                dedupEnabled = true,
+                concurrency = 4,
+            ),
+            onProgress = { progress += it },
+        )
+
+        assertEquals(domains.joinToString("\n") { "10.0.0.1 $it" }, result.outputText)
+        assertTrue(resolver.maxInFlight > 1, "expected parallel lookups, maxInFlight=${resolver.maxInFlight}")
+        assertTrue(resolver.maxInFlight <= 4, "concurrency limit exceeded, maxInFlight=${resolver.maxInFlight}")
+        assertEquals(20, progress.last().processedLines)
+        assertEquals(20, progress.last().totalLines)
+    }
+
+    @Test
+    fun generate_resolvesRepeatedDomainOnlyOnce() = runBlocking {
+        val resolver = ConcurrencyTrackingFake()
+        val generator = HostsGenerator(dnsResolver = resolver)
+
+        val result = generator.generate(
+            presetTitle = "Test DNS",
+            request = GenerateHostsRequest(
+                primaryDns = "1.1.1.1",
+                checkDns = "8.8.8.8",
+                inputLines = listOf("a.example", "  a.example  ", "a.example"),
+                outputFileName = "hosts.txt",
+                dedupEnabled = false,
+            ),
+        )
+
+        // Без дедупликации все строки остаются в выводе, но DNS-запрос выполняется один раз.
+        assertEquals(List(3) { "10.0.0.1 a.example" }.joinToString("\n"), result.outputText)
+        assertEquals(2, resolver.totalCalls)
+    }
+
+    @Test
     fun generationStats_marksSuspiciousForwarding() {
         val intercepted = GenerationStats(
             lineCount = 10,
@@ -197,5 +247,25 @@ private class OptionsCapturingFake : DnsResolver {
         }
         checkOptions = options
         return listOf("10.0.0.2")
+    }
+}
+
+/** Фейк с задержкой, считающий максимальное число одновременных запросов. */
+private class ConcurrencyTrackingFake : DnsResolver {
+    var inFlight = 0
+    var maxInFlight = 0
+    var totalCalls = 0
+
+    override suspend fun resolveA(
+        domain: String,
+        dnsServer: String,
+        timeoutMillis: Int,
+    ): List<String> {
+        totalCalls++
+        inFlight++
+        maxInFlight = maxOf(maxInFlight, inFlight)
+        delay(10)
+        inFlight--
+        return if (dnsServer == "1.1.1.1") listOf("10.0.0.1") else listOf("10.0.0.2")
     }
 }

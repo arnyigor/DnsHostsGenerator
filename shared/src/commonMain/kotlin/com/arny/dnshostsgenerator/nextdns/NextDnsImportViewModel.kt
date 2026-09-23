@@ -69,6 +69,9 @@ sealed interface NextDnsImportEvent {
     data class OnSkipLoopbackChanged(val enabled: Boolean) : NextDnsImportEvent
     data class OnProfileNameChanged(val name: String) : NextDnsImportEvent
     object OnParse : NextDnsImportEvent
+
+    /** Вставить текст, распарсить и сразу запустить импорт (быстрый сценарий для телефона). */
+    data class OnQuickImport(val text: String) : NextDnsImportEvent
     object OnImport : NextDnsImportEvent
     object OnRecreateAccount : NextDnsImportEvent
     object OnCancelImport : NextDnsImportEvent
@@ -125,6 +128,7 @@ class NextDnsImportViewModel(
                 _state.update { it.copy(profileName = event.name) }
             }
             is NextDnsImportEvent.OnParse -> parseDomains()
+            is NextDnsImportEvent.OnQuickImport -> quickImport(event.text)
             is NextDnsImportEvent.OnImport -> startImport(resetSession = true)
             is NextDnsImportEvent.OnRecreateAccount -> recreateAccountAndImport()
             is NextDnsImportEvent.OnCancelImport -> cancelImport()
@@ -161,6 +165,27 @@ class NextDnsImportViewModel(
                 )
             }
         }
+    }
+
+    private fun quickImport(text: String) {
+        val current = _state.value
+        if (current.isCreatingAccount || current.isImporting || current.isCancelling) return
+
+        parsedResult = null
+        _state.update { it.copy(domainText = text) }
+        parseDomains()
+        if (_state.value.errorMessage != null) return
+
+        if (parsedResult?.rewrites.isNullOrEmpty()) {
+            _state.update {
+                it.copy(
+                    errorMessage = "Нет записей для импорта: включите группы или сгенерируйте hosts",
+                    statusMessage = "Нечего импортировать",
+                )
+            }
+            return
+        }
+        startImport(resetSession = true)
     }
 
     private fun startImport(resetSession: Boolean) {

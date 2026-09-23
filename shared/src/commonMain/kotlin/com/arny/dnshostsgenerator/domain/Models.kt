@@ -6,7 +6,7 @@ data class DnsProviderPreset(
     val primaryDns: String,
     /**
      * Hostname для DNS-over-TLS (порт 853). Если null — используется [primaryDns].
-     * DoT уменьшает влияние локального перехвата DNS-запросов UDP/TCP:53.
+     * DoT обходит перехват UDP/TCP:53 на сетях с VPN/DNS-прокси.
      */
     val dotHost: String? = null,
     /**
@@ -84,6 +84,8 @@ data class GenerateHostsRequest(
     val preserveComments: Boolean = true,
     val preserveBlankLines: Boolean = true,
     val timeoutMillis: Int = 5_000,
+    /** Сколько доменов резолвится одновременно. */
+    val concurrency: Int = 16,
 )
 
 sealed interface HostLine {
@@ -140,7 +142,7 @@ data class GenerationStats(
 
     /**
      * Признак вероятного перехвата DNS-запросов: почти все домены помечены #forwarded,
-     * т.е. primary и check-резолверы вернули одинаковые IP (DNS-прокси/фильтры сети).
+     * т.е. primary и check-резолверы вернули одинаковые IP (VPN/DNS-прокси).
      */
     val suspiciousForwarding: Boolean
         get() {

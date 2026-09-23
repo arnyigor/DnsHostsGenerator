@@ -8,6 +8,9 @@ import androidx.navigation.compose.rememberNavController
 import com.arny.dnshostsgenerator.nextdns.NextDnsImportEvent
 import com.arny.dnshostsgenerator.nextdns.NextDnsImportScreen
 import com.arny.dnshostsgenerator.nextdns.NextDnsImportState
+import com.arny.dnshostsgenerator.nextdns.NextDnsQuickImportCard
+import com.arny.dnshostsgenerator.nextdns.quickImportSource
+import com.arny.dnshostsgenerator.platform.isMobilePlatform
 import com.arny.dnshostsgenerator.presentation.HostsGeneratorEvent
 import com.arny.dnshostsgenerator.presentation.HostsGeneratorScreen
 import com.arny.dnshostsgenerator.presentation.HostsGeneratorState
@@ -36,9 +39,18 @@ fun AppNavigation(
             HostsGeneratorScreen(
                 state = hostsGeneratorState,
                 onEvent = onHostsGeneratorEvent,
-                onNavigateToNextDnsImport = {
-                    onNextDnsImportEvent(NextDnsImportEvent.OnDomainTextChanged(hostsGeneratorState.domainText))
-                    navController.navigate(AppRoutes.NEXT_DNS_IMPORT)
+                // На телефоне отдельный экран NextDNS не нужен: импорт встроен в главный экран.
+                nextDnsQuickImport = if (isMobilePlatform) {
+                    {
+                        NextDnsQuickImportCard(
+                            state = nextDnsImportState,
+                            source = quickImportSource(hostsGeneratorState),
+                            enabled = !hostsGeneratorState.isGenerating,
+                            onEvent = onNextDnsImportEvent,
+                        )
+                    }
+                } else {
+                    null
                 },
             )
         }
