@@ -10,6 +10,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -18,6 +19,7 @@ import androidx.compose.ui.Modifier
 import com.arny.dnshostsgenerator.navigation.AppNavigation
 import com.arny.dnshostsgenerator.nextdns.NextDnsImportViewModel
 import com.arny.dnshostsgenerator.presentation.HostsGeneratorViewModel
+import com.arny.dnshostsgenerator.presentation.LocalSnackbarHostState
 import com.arny.dnshostsgenerator.presentation.UiEffect
 import com.arny.dnshostsgenerator.presentation.theme.AppTheme
 import kotlinx.coroutines.launch
@@ -58,18 +60,20 @@ fun AppContent() {
         }
     }
 
-    Scaffold(
-        modifier = Modifier.safeContentPadding(),
-        containerColor = MaterialTheme.colorScheme.background,
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-    ) { innerPadding ->
-        AppNavigation(
-            hostsGeneratorState = hostsGeneratorState,
-            onHostsGeneratorEvent = hostsGeneratorViewModel::onEvent,
-            nextDnsImportState = nextDnsImportState,
-            onNextDnsImportEvent = nextDnsImportViewModel::onEvent,
-            modifier = Modifier.padding(innerPadding),
-        )
+    CompositionLocalProvider(LocalSnackbarHostState provides snackbarHostState) {
+        Scaffold(
+            modifier = Modifier.safeContentPadding(),
+            containerColor = MaterialTheme.colorScheme.background,
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+        ) { innerPadding ->
+            AppNavigation(
+                hostsGeneratorState = hostsGeneratorState,
+                onHostsGeneratorEvent = hostsGeneratorViewModel::onEvent,
+                nextDnsImportState = nextDnsImportState,
+                onNextDnsImportEvent = nextDnsImportViewModel::onEvent,
+                modifier = Modifier.padding(innerPadding),
+            )
+        }
     }
 }

@@ -99,6 +99,7 @@ fun HostsGeneratorScreen(
     state: HostsGeneratorState,
     onEvent: (HostsGeneratorEvent) -> Unit,
     onNavigateToNextDnsImport: () -> Unit,
+    nextDnsQuickImport: (@Composable () -> Unit)? = null,
 ) {
     val clipboardManager = LocalClipboardManager.current
 
@@ -140,6 +141,7 @@ fun HostsGeneratorScreen(
         },
         onSaveTextFile = { fileName, content -> onEvent(HostsGeneratorEvent.OnSaveTextFile(fileName, content)) },
         onNavigateToNextDnsImport = onNavigateToNextDnsImport,
+        nextDnsQuickImport = nextDnsQuickImport,
     )
 }
 
@@ -178,6 +180,11 @@ fun HostsGeneratorScreen(
     onCopyText: (String) -> Unit,
     onSaveTextFile: (String, String) -> Unit,
     onNavigateToNextDnsImport: () -> Unit = {},
+    /**
+     * Встроенный блок импорта в NextDNS (телефон). Если задан, кнопка перехода
+     * на отдельный экран NextDNS не показывается.
+     */
+    nextDnsQuickImport: (@Composable () -> Unit)? = null,
 ) {
     val selectedPresetsCount = if (selectedPresetIds.isEmpty() && presets.isNotEmpty()) {
         1
@@ -196,7 +203,11 @@ fun HostsGeneratorScreen(
         val compact = maxWidth < 900.dp
 
         @Composable
-        fun Controls(modifier: Modifier, domainEditorModifier: Modifier) {
+        fun Controls(
+            modifier: Modifier,
+            domainEditorModifier: Modifier,
+            extraContent: (@Composable () -> Unit)? = null,
+        ) {
             ControlsPanel(
                 modifier = modifier,
                 domainEditorModifier = domainEditorModifier,
@@ -227,6 +238,8 @@ fun HostsGeneratorScreen(
                 onGenerate = onGenerate,
                 onCancelGeneration = onCancelGeneration,
                 onNavigateToNextDnsImport = onNavigateToNextDnsImport,
+                showNextDnsNavigation = nextDnsQuickImport == null,
+                extraContent = extraContent,
                 compact = compact,
             )
         }
@@ -272,6 +285,8 @@ fun HostsGeneratorScreen(
                         .fillMaxWidth()
                         .height(560.dp),
                 )
+                // Импорт в NextDNS логично идёт после результата: по умолчанию берёт готовый hosts.
+                nextDnsQuickImport?.invoke()
             }
         } else {
             Row(
@@ -285,6 +300,7 @@ fun HostsGeneratorScreen(
                     domainEditorModifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
+                    extraContent = nextDnsQuickImport,
                 )
                 Results(
                     modifier = Modifier
@@ -327,6 +343,8 @@ private fun ControlsPanel(
     onGenerate: () -> Unit,
     onCancelGeneration: () -> Unit,
     onNavigateToNextDnsImport: () -> Unit,
+    showNextDnsNavigation: Boolean,
+    extraContent: (@Composable () -> Unit)?,
     compact: Boolean,
 ) {
     var presetsExpanded by rememberSaveable { mutableStateOf(false) }
@@ -397,7 +415,9 @@ private fun ControlsPanel(
             onGenerate = onGenerate,
             onCancelGeneration = onCancelGeneration,
             onNavigateToNextDnsImport = onNavigateToNextDnsImport,
+            showNextDnsNavigation = showNextDnsNavigation,
         )
+        extraContent?.invoke()
     }
 }
 
@@ -412,6 +432,7 @@ private fun GenerateSection(
     onGenerate: () -> Unit,
     onCancelGeneration: () -> Unit,
     onNavigateToNextDnsImport: () -> Unit,
+    showNextDnsNavigation: Boolean,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (isGenerating) {
@@ -466,14 +487,16 @@ private fun GenerateSection(
                 )
             }
         }
-        OutlinedButton(
-            enabled = !isGenerating,
-            onClick = onNavigateToNextDnsImport,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Импорт в NextDNS / получить DNS")
+        if (showNextDnsNavigation) {
+            OutlinedButton(
+                enabled = !isGenerating,
+                onClick = onNavigateToNextDnsImport,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Импорт в NextDNS / получить DNS")
+            }
         }
         if (statusText.isNotBlank()) {
             Text(
