@@ -14,6 +14,8 @@ import com.arny.dnshostsgenerator.domain.GenerationResult
 import com.arny.dnshostsgenerator.generator.HostsGenerator
 import com.arny.dnshostsgenerator.logging.AppLogger
 import com.arny.dnshostsgenerator.platform.saveTextFile
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,6 +45,8 @@ data class HostsGeneratorState(
     val selectedPresetIds: Set<String> = emptySet(),
     val dedupEnabled: Boolean = true,
     val isGenerating: Boolean = false,
+    /** Доля выполненной генерации 0..1 (по всем выбранным пресетам); null — генерация не идёт. */
+    val progress: Float? = null,
     val progressText: String = "Готово к генерации",
     val statusText: String = "По умолчанию выбран один рекомендуемый DNS. Остальные нужны только для сравнения.",
     val results: List<GenerationResult> = emptyList(),
@@ -79,7 +83,7 @@ sealed interface HostsGeneratorEvent {
     object OnSelectAllPresets : HostsGeneratorEvent
     object OnClearPresets : HostsGeneratorEvent
     object OnGenerate : HostsGeneratorEvent
-    object OnResetDomains : HostsGeneratorEvent
+    object OnCancelGeneration : HostsGeneratorEvent
     object OnTextCopied : HostsGeneratorEvent
     data class OnSaveTextFile(val fileName: String, val content: String) : HostsGeneratorEvent
 }
@@ -94,6 +98,8 @@ class HostsGeneratorViewModel(
 
     private val _effect = MutableSharedFlow<UiEffect>()
     val effect = _effect.asSharedFlow()
+
+    private var generationJob: Job? = null
 
     init {
         observeDomainGroups()
@@ -134,8 +140,8 @@ class HostsGeneratorViewModel(
                 it.copy(selectedPresetIds = emptySet())
             }
 
-            HostsGeneratorEvent.OnResetDomains -> setAllDomainGroupsEnabled(true)
             HostsGeneratorEvent.OnGenerate -> generateHosts()
+            HostsGeneratorEvent.OnCancelGeneration -> generationJob?.cancel()
             is HostsGeneratorEvent.OnTextCopied -> showToast("Текст скопирован")
             is HostsGeneratorEvent.OnSaveTextFile -> saveFile(event.fileName, event.content)
         }
@@ -338,6 +344,7 @@ class HostsGeneratorViewModel(
         _state.update {
             it.copy(
                 isGenerating = true,
+                progress = 0f,
                 results = emptyList(),
                 selectedResultIndex = 0,
                 statusText = if (it.selectedPresets.size == 1) {
@@ -349,15 +356,14 @@ class HostsGeneratorViewModel(
         }
 
         // viewModelScope гарантирует, что если UI уничтожится, тяжелый процесс DNS-резолвинга прервется
-        viewModelScope.launch {
+        generationJob = viewModelScope.launch {
             val generatedResults = mutableListOf<GenerationResult>()
+            val presets = currentState.selectedPresets
             val inputLines =
                 currentState.domainText.replace("\r\n", "\n").replace('\r', '\n').split('\n')
 
-            runCatching {
-                currentState.selectedPresets.forEachIndexed { index, preset ->
-                    _state.update { it.copy(progressText = "${index + 1}/${currentState.selectedPresets.size}: ${preset.title}") }
-
+            try {
+                presets.forEachIndexed { index, preset ->
                     val result = generator.generate(
                         presetTitle = preset.title,
                         request = GenerateHostsRequest(
@@ -370,14 +376,21 @@ class HostsGeneratorViewModel(
                             dedupEnabled = currentState.dedupEnabled,
                         ),
                     ) { progress ->
+                        val presetFraction = if (progress.totalLines > 0) {
+                            progress.processedLines.toFloat() / progress.totalLines
+                        } else {
+                            0f
+                        }
                         _state.update {
                             it.copy(
+                                progress = (index + presetFraction) / presets.size,
                                 progressText = buildString {
+                                    if (presets.size > 1) {
+                                        append("${index + 1}/${presets.size} · ")
+                                    }
                                     append("${preset.title}: ${progress.processedLines}/${progress.totalLines}")
                                     progress.currentDomain?.let { domain ->
-                                        append(" — ").append(
-                                            domain
-                                        )
+                                        append(" — ").append(domain)
                                     }
                                 }
                             )
@@ -391,10 +404,7 @@ class HostsGeneratorViewModel(
                         )
                     }
                 }
-            }.onFailure { error ->
-                AppLogger.e("Generation failed unexpectedly", error)
-                _state.update { it.copy(statusText = "Ошибка генерации: ${error.message ?: error::class.simpleName}") }
-            }.onSuccess {
+
                 if (generatedResults.isNotEmpty()) {
                     val hasSuspiciousForwarding = generatedResults.any { it.stats.suspiciousForwarding }
                     _state.update {
@@ -415,9 +425,15 @@ class HostsGeneratorViewModel(
                         )
                     }
                 }
+            } catch (error: CancellationException) {
+                _state.update { it.copy(statusText = "Генерация остановлена") }
+                throw error
+            } catch (error: Exception) {
+                AppLogger.e("Generation failed unexpectedly", error)
+                _state.update { it.copy(statusText = "Ошибка генерации: ${error.message ?: error::class.simpleName}") }
+            } finally {
+                _state.update { it.copy(isGenerating = false, progress = null, progressText = "Готово") }
             }
-
-            _state.update { it.copy(isGenerating = false, progressText = "Готово") }
         }
     }
 
@@ -425,6 +441,7 @@ class HostsGeneratorViewModel(
         viewModelScope.launch {
             val saveResult = saveTextFile(fileName, content) // Твой платформенный метод
             _state.update { it.copy(statusText = saveResult.message) }
+            _effect.emit(UiEffect.ShowToast(saveResult.message))
         }
     }
 }
