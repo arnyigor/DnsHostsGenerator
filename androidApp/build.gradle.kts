@@ -31,8 +31,8 @@ android {
         applicationId = "com.arny.dnshostsgenerator"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 140
-        versionName = "1.4.0"
+        versionCode = 141
+        versionName = "1.4.1"
     }
     packaging {
         resources {
