@@ -7,6 +7,14 @@ object BuiltInDnsPresets {
 
     val defaults: List<DnsProviderPreset> = listOf(
         DnsProviderPreset(
+            id = "dns_bezmezhau_com",
+            title = "dns.bezmezhau.com",
+            // Адрес сервера неизвестен — как и у astracat/geohide/malw, ходим по hostname:
+            // DoT (853) со строгой проверкой сертификата проверен живым запросом 12.10.2026.
+            primaryDns = "dns.bezmezhau.com",
+            outputFileName = "host_out_dns.bezmezhau.com.txt",
+        ),
+        DnsProviderPreset(
             id = "dns_astracat_ru",
             title = "dns.astracat.ru",
             primaryDns = "dns.astracat.ru",
@@ -52,6 +60,12 @@ object BuiltInDnsPresets {
             title = "pro.shecan.ir",
             primaryDns = "pro.shecan.ir",
             outputFileName = "host_out_pro.shecan.ir.txt",
+        ),
+        DnsProviderPreset(
+            id = "dns_zapret_moe",
+            title = "dns.zapret.moe",
+            primaryDns = "dns.zapret.moe",
+            outputFileName = "host_out_dns.zapret.moe.txt",
         ),
         DnsProviderPreset(
             id = "xbox_dns_ru",

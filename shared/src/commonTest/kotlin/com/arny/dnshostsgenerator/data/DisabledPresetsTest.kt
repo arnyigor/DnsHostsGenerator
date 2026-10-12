@@ -30,8 +30,12 @@ class DisabledPresetsTest {
         val enabled = BuiltInDnsPresets.defaults.filter { it.enabledByDefault }.map { it.id }
 
         // Удалять рабочие пресеты нельзя: все остальные остаются включёнными.
+        // dns.bezmezhau.com и dns.zapret.moe добавлены 12.10.2026 по итогам разбора темы:
+        // DoT со строгой проверкой сертификата проверен живым запросом, на chatgpt/openai/gemini
+        // они отвечают рабочим прокси-адресом.
         assertEquals(
             listOf(
+                "dns_bezmezhau_com",
                 "dns_astracat_ru",
                 "dns_comss_one",
                 "dns_geohide_ru",
@@ -39,6 +43,7 @@ class DisabledPresetsTest {
                 "dns_malw_link",
                 "free_shecan_ir",
                 "pro_shecan_ir",
+                "dns_zapret_moe",
             ),
             enabled,
         )
