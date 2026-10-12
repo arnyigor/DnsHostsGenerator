@@ -13,7 +13,9 @@ import com.arny.dnshostsgenerator.domain.GenerateHostsRequest
 import com.arny.dnshostsgenerator.domain.GenerationResult
 import com.arny.dnshostsgenerator.generator.HostsGenerator
 import com.arny.dnshostsgenerator.logging.AppLogger
+import com.arny.dnshostsgenerator.nextdns.HostsParser
 import com.arny.dnshostsgenerator.platform.saveTextFile
+import com.arny.dnshostsgenerator.platform.updateSystemHosts
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -86,6 +88,7 @@ sealed interface HostsGeneratorEvent {
     object OnCancelGeneration : HostsGeneratorEvent
     object OnTextCopied : HostsGeneratorEvent
     data class OnSaveTextFile(val fileName: String, val content: String) : HostsGeneratorEvent
+    data class OnUpdateSystemHosts(val content: String) : HostsGeneratorEvent
 }
 
 class HostsGeneratorViewModel(
@@ -144,6 +147,7 @@ class HostsGeneratorViewModel(
             HostsGeneratorEvent.OnCancelGeneration -> generationJob?.cancel()
             is HostsGeneratorEvent.OnTextCopied -> showToast("Текст скопирован")
             is HostsGeneratorEvent.OnSaveTextFile -> saveFile(event.fileName, event.content)
+            is HostsGeneratorEvent.OnUpdateSystemHosts -> updateHostsFile(event.content)
         }
     }
 
@@ -278,9 +282,30 @@ class HostsGeneratorViewModel(
     }
 
     private fun addDomains(groupId: Long, text: String) {
-        val domains = text.toDomainLines()
+        // Список может быть в любом из диалектов, встречающихся в теме (hosts, dnsmasq,
+        // AdGuard/zapret, plain). Для групп важны только домены, поэтому loopback-цели
+        // (127.0.0.1/0.0.0.0 в блокирующих списках) не отбрасываем.
+        // Прежняя реализация теряла hosts-строки целиком, а adguard-правила
+        // («||d^$dnsrewrite=…») записывала в БД как «домены».
+        val parsed = HostsParser.parseInput(
+            text = text,
+            defaultTarget = "127.0.0.1",
+            skipLoopback = false,
+        )
+        val domains = parsed.rewrites.map { it.domain }.distinct()
         if (domains.isEmpty()) {
-            _state.update { it.copy(statusText = "Введите один или несколько доменов") }
+            val reason = parsed.issues.firstOrNull()?.let { issue ->
+                ": ${issue.reason} (строка ${issue.lineNumber ?: "?"})"
+            } ?: ""
+            _state.update {
+                it.copy(
+                    statusText = if (parsed.issues.isEmpty()) {
+                        "Введите один или несколько доменов"
+                    } else {
+                        "Не распознан ни один домен$reason"
+                    },
+                )
+            }
             return
         }
         viewModelScope.launch {
@@ -298,7 +323,15 @@ class HostsGeneratorViewModel(
                 AppLogger.e("Failed to add domains: groupId=$groupId", error)
                 _state.update { it.copy(statusText = "Ошибка добавления доменов: ${error.message ?: error::class.simpleName}") }
             }.onSuccess {
-                _state.update { it.copy(statusText = "Добавлено доменов: ${domains.size}") }
+                _state.update {
+                    it.copy(
+                        statusText = buildString {
+                            append("Добавлено доменов: ${domains.size}")
+                            if (parsed.issues.isNotEmpty()) append("; нераспознанных строк: ${parsed.issues.size}")
+                            if (parsed.conflicts.isNotEmpty()) append("; конфликтов IP: ${parsed.conflicts.size}")
+                        },
+                    )
+                }
             }
         }
     }
@@ -444,6 +477,14 @@ class HostsGeneratorViewModel(
             _effect.emit(UiEffect.ShowToast(saveResult.message))
         }
     }
+
+    private fun updateHostsFile(content: String) {
+        viewModelScope.launch {
+            val saveResult = updateSystemHosts(content)
+            _state.update { it.copy(statusText = saveResult.message) }
+            _effect.emit(UiEffect.ShowToast(saveResult.message))
+        }
+    }
 }
 
 private fun List<GroupWithDomains>.toDomainGroupUi(): List<DomainGroupUi> =
@@ -474,13 +515,6 @@ private fun List<DomainGroupUi>.toEnabledDomainText(): String =
                 }
             }.trimEnd()
         }
-
-private fun String.toDomainLines(): List<String> =
-    replace("\r\n", "\n")
-        .replace('\r', '\n')
-        .split('\n')
-        .mapNotNull { line -> line.toDomainLineOrNull() }
-        .distinct()
 
 private fun String.toDomainLineOrNull(): String? {
     val domain = trim()

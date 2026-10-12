@@ -8,6 +8,33 @@ object HostsParser {
 
     private val DOMAIN_LABEL = Regex("^[a-z0-9-]+$")
 
+    // Диалекты готовых списков. В теме 4PDA один и тот же набор доменов выкладывают сразу
+    // четырьмя файлами: hosts (aihosts.txt/nextdns.txt), dnsmasq (aihosts.conf),
+    // AdGuard/zapret (adguard.txt, rules.txt) — последние два парсер раньше не понимал.
+    private val ADGUARD_REWRITE = Regex("""^\|{1,2}([^$^|]+)\^\$.*?\bdnsrewrite=([^\s]+)$""")
+    private val DNSMASQ_SERVER = Regex("""^server=/([^/]+)/([^\s/]+)$""")
+
+    /**
+     * Приводит диалекты к hosts-строкам, чтобы дальше работал один и тот же разбор.
+     * Переводим только правила с явным IP (`dnsrewrite=<ip>`) и dnsmasq-строки: у них адрес
+     * известен. Правила без IP и шаблоны со `*` остаются как есть — вызывающий код покажет их
+     * как issues, а не потеряет молча.
+     */
+    private fun normalizeDialects(text: String): String = text.splitLines().joinToString("\n") { raw ->
+        val line = raw.trim()
+        when {
+            line.isEmpty() -> raw
+            line.startsWith("!") -> "# " + line.removePrefix("!")   // комментарий в стиле zapret
+            line.startsWith("@@") -> "# " + line                     // исключение, а не rewrite
+            else -> ADGUARD_REWRITE.matchEntire(line)?.let { match ->
+                val target = match.groupValues[2].substringAfterLast(';').substringAfterLast(',')
+                "$target ${match.groupValues[1]}"
+            } ?: DNSMASQ_SERVER.matchEntire(line)?.let { match ->
+                "${match.groupValues[2]} ${match.groupValues[1]}"
+            } ?: raw
+        }
+    }
+
     /**
      * Auto-detect input format: hosts file lines (`ip domain`) or plain domain list.
      */
@@ -17,21 +44,22 @@ object HostsParser {
         stripWww: Boolean = true,
         skipLoopback: Boolean = true,
     ): ParsedDomainsResult {
-        val hasHostsLines = text.splitLines().any { line ->
+        val normalized = normalizeDialects(text)
+        val hasHostsLines = normalized.splitLines().any { line ->
             val content = line.substringBefore("#").trim()
             val parts = content.splitToSequence(Regex("\\s+")).toList()
             parts.size >= 2 && parseIpAddress(parts.first()) != null
         }
         return if (hasHostsLines) {
             parseHostsText(
-                text = text,
+                text = normalized,
                 stripWww = stripWww,
                 skipLoopback = skipLoopback,
                 defaultTarget = defaultTarget,
             )
         } else {
             parseDomainList(
-                text = text,
+                text = normalized,
                 defaultTarget = defaultTarget,
                 stripWww = stripWww,
             )

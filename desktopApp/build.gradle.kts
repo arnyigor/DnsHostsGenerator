@@ -22,7 +22,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
             packageName = "DnsHostsGenerator"
-            packageVersion = "1.4.0"
+            packageVersion = "1.4.1"
             includeAllModules = true
         }
     }

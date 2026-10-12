@@ -70,6 +70,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -90,8 +91,14 @@ import androidx.compose.ui.tooling.preview.AndroidUiModes.UI_MODE_NIGHT_YES
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.arny.dnshostsgenerator.domain.DnsProviderPreset
+import com.arny.dnshostsgenerator.domain.ExportFormat
 import com.arny.dnshostsgenerator.domain.GenerationResult
+import com.arny.dnshostsgenerator.domain.exportFileName
+import com.arny.dnshostsgenerator.domain.exportText
+import com.arny.dnshostsgenerator.platform.canUpdateSystemHosts
+import com.arny.dnshostsgenerator.platform.pickArchive
 import com.arny.dnshostsgenerator.presentation.theme.AppTheme
+import kotlinx.coroutines.launch
 
 @Composable
 fun HostsGeneratorScreen(
@@ -138,6 +145,7 @@ fun HostsGeneratorScreen(
             onEvent(HostsGeneratorEvent.OnTextCopied)
         },
         onSaveTextFile = { fileName, content -> onEvent(HostsGeneratorEvent.OnSaveTextFile(fileName, content)) },
+        onUpdateSystemHosts = { content -> onEvent(HostsGeneratorEvent.OnUpdateSystemHosts(content)) },
         nextDnsQuickImport = nextDnsQuickImport,
     )
 }
@@ -176,6 +184,7 @@ fun HostsGeneratorScreen(
     onSelectResult: (Int) -> Unit,
     onCopyText: (String) -> Unit,
     onSaveTextFile: (String, String) -> Unit,
+    onUpdateSystemHosts: (String) -> Unit = {},
     /**
      * Встроенный блок импорта в NextDNS (телефон). Если задан, кнопка перехода
      * на отдельный экран NextDNS не показывается.
@@ -249,6 +258,7 @@ fun HostsGeneratorScreen(
                 onSelectResult = onSelectResult,
                 onCopy = onCopyText,
                 onSave = onSaveTextFile,
+                onUpdateSystemHosts = onUpdateSystemHosts,
             )
         }
 
@@ -755,6 +765,9 @@ private fun DomainGroupRow(
     var confirmDeleteGroup by rememberSaveable(group.id) { mutableStateOf(false) }
     var groupName by remember(group.id, group.name) { mutableStateOf(group.name) }
     var newDomainsText by rememberSaveable(group.id) { mutableStateOf("") }
+    var pickMessage by rememberSaveable(group.id) { mutableStateOf<String?>(null) }
+    var isPickingArchive by rememberSaveable(group.id) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val newDomainsError = remember(newDomainsText) { validateDomainsInputError(newDomainsText) }
     val canAddDomains = newDomainsText.isNotBlank() && newDomainsError == null
     val previewCount = if (compact) 1 else 3
@@ -901,10 +914,50 @@ private fun DomainGroupRow(
                             onClick = {
                                 onAddDomains(newDomainsText)
                                 newDomainsText = ""
+                                pickMessage = null
                             },
                             modifier = Modifier.padding(top = 8.dp),
                         ) {
                             Text("Добавить")
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TextButton(
+                            enabled = !isPickingArchive,
+                            onClick = {
+                                scope.launch {
+                                    isPickingArchive = true
+                                    val picked = pickArchive()
+                                    isPickingArchive = false
+                                    if (picked.hasEntries) {
+                                        // Паки с 4PDA приходят архивом из 2–4 файлов: склеиваем их текст,
+                                        // дальше пользователь видит, что именно уезжает в группу.
+                                        val merged = picked.entries.joinToString("\n") { entry ->
+                                            entry.content.trim()
+                                        }
+                                        newDomainsText = listOf(newDomainsText.trim(), merged)
+                                            .filter { it.isNotEmpty() }
+                                            .joinToString("\n")
+                                        pickMessage = "Из архива: " +
+                                            picked.entries.joinToString(", ") { it.name }
+                                    } else {
+                                        pickMessage = picked.message
+                                    }
+                                }
+                            },
+                        ) {
+                            Text(if (isPickingArchive) "Читаю архив…" else "Из архива…")
+                        }
+                        pickMessage?.let { message ->
+                            Text(
+                                text = message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
 
@@ -1052,6 +1105,7 @@ private fun ResultsPanel(
     onSelectResult: (Int) -> Unit,
     onCopy: (String) -> Unit,
     onSave: (String, String) -> Unit,
+    onUpdateSystemHosts: (String) -> Unit,
 ) {
     Column(
         modifier = modifier,
@@ -1076,6 +1130,7 @@ private fun ResultsPanel(
                 result = selectedResult,
                 onCopy = onCopy,
                 onSave = onSave,
+                onUpdateSystemHosts = onUpdateSystemHosts,
             )
             ResultText(selectedResult.outputText)
         } else {
@@ -1397,21 +1452,85 @@ private fun ResultActions(
     result: GenerationResult,
     onCopy: (String) -> Unit,
     onSave: (String, String) -> Unit,
+    onUpdateSystemHosts: (String) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        FilledTonalButton(onClick = { onCopy(result.outputText) }) {
-            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Копировать")
+    var showUpdateHostsDialog by rememberSaveable { mutableStateOf(false) }
+    // Формат экспорта — сугубо локальный выбор: тот же список сообщество 4PDA раздаёт
+    // как hosts, dnsmasq .conf, AdGuard-правила и NextDNS-список.
+    var exportFormat by rememberSaveable { mutableStateOf(ExportFormat.HOSTS) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ExportFormat.entries.forEach { format ->
+                FilterChip(
+                    selected = exportFormat == format,
+                    onClick = { exportFormat = format },
+                    label = { Text(format.label) },
+                )
+            }
         }
-        OutlinedButton(onClick = { onSave(result.outputFileName, result.outputText) }) {
-            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Сохранить файл")
+
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (canUpdateSystemHosts) {
+                FilledTonalButton(onClick = { showUpdateHostsDialog = true }) {
+                    Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Обновить hosts")
+                }
+            }
+            FilledTonalButton(onClick = { onCopy(result.exportText(exportFormat)) }) {
+                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Копировать")
+            }
+            OutlinedButton(
+                onClick = {
+                    onSave(
+                        result.exportFileName(exportFormat),
+                        result.exportText(exportFormat),
+                    )
+                },
+            ) {
+                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Сохранить файл")
+            }
         }
+    }
+
+    if (showUpdateHostsDialog) {
+        AlertDialog(
+            onDismissRequest = { showUpdateHostsDialog = false },
+            icon = { Icon(Icons.Default.Warning, contentDescription = null) },
+            title = { Text("Обновить системный hosts?") },
+            text = {
+                Text(
+                    "Текущий hosts будет заменён с созданием резервной копии рядом с файлом. " +
+                        "Для записи может потребоваться запуск от имени администратора/root.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showUpdateHostsDialog = false
+                        onUpdateSystemHosts(result.outputText)
+                    },
+                ) {
+                    Text("Обновить")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUpdateHostsDialog = false }) {
+                    Text("Отмена")
+                }
+            },
+        )
     }
 }
 
