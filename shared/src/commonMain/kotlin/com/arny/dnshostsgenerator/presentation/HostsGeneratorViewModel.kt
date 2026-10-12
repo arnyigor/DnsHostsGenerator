@@ -392,8 +392,7 @@ class HostsGeneratorViewModel(
         generationJob = viewModelScope.launch {
             val generatedResults = mutableListOf<GenerationResult>()
             val presets = currentState.selectedPresets
-            val inputLines =
-                currentState.domainText.replace("\r\n", "\n").replace('\r', '\n').split('\n')
+            val inputLines = HostsParser.normalizeToDomainLines(currentState.domainText)
 
             try {
                 presets.forEachIndexed { index, preset ->

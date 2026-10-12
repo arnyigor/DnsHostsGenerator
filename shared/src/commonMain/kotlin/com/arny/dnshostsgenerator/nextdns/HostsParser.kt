@@ -197,6 +197,35 @@ object HostsParser {
         )
     }
 
+    /**
+     * Приводит любой из поддерживаемых диалектов к строкам-доменам для генератора hosts.
+     * IP из hosts / dnsmasq / AdGuard-строк отбрасывается: приложение резолвит домены само.
+     * Комментарии и пустые строки сохраняются, строка без распознанного домена остаётся как есть —
+     * генератор покажет её в результате как #unresolvedDomain, а не потеряет молча.
+     */
+    fun normalizeToDomainLines(text: String): List<String> {
+        val result = mutableListOf<String>()
+        normalizeDialects(text).replace("\r\n", "\n").replace('\r', '\n').split("\n").forEach { raw ->
+            val line = raw.trim()
+            when {
+                line.isEmpty() -> result += ""
+                line.startsWith("#") -> result += line
+                else -> {
+                    val content = line.substringBefore('#').trim()
+                    val parts = content.splitToSequence(Regex("\\s+")).filter { it.isNotBlank() }.toList()
+                    val isHostsLine = parts.size >= 2 && parseIpAddress(parts.first()) != null
+                    // www не срезаем: список пользователя — источник истины, домены резолвятся как есть.
+                    val domains = (if (isHostsLine) parts.drop(1) else listOf(content))
+                        .mapNotNull { rawDomain ->
+                            runCatching { normalizeDomain(rawDomain, stripWww = false) }.getOrNull()
+                        }
+                    if (domains.isEmpty()) result += line else result += domains
+                }
+            }
+        }
+        return result
+    }
+
     private fun normalizeDomain(rawDomain: String, stripWww: Boolean): String {
         var domain = rawDomain.trim()
             .substringBefore('#')

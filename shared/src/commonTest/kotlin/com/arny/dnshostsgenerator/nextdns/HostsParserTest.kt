@@ -162,6 +162,40 @@ class HostsParserTest {
     }
 
     /**
+     * Главное поле ввода тоже принимает любые диалекты темы: раньше строка
+     * `103.137.248.179 chatgpt.com` или `||chatgpt.com^$dnsrewrite=…` уезжала в резолвер
+     * целиком и становилась #unresolvedDomain.
+     */
+    @Test
+    fun normalizeToDomainLines_convertsDialectsAndKeepsStructure() {
+        val lines = HostsParser.normalizeToDomainLines(
+            "# --- OpenAI ---\n" +
+                "103.137.248.179 chatgpt.com\n" +
+                "||ab.chatgpt.com^${'$'}dnsrewrite=103.137.248.179\n" +
+                "server=/openai.com/83.220.169.155\n" +
+                "1.2.3.4 one.example two.example\n" +
+                "\n" +
+                "chatgpt.com # комментарий\n" +
+                "||cdn.*ads.^ "
+        )
+
+        assertEquals(
+            listOf(
+                "# --- OpenAI ---",
+                "chatgpt.com",
+                "ab.chatgpt.com",
+                "openai.com",
+                "one.example",
+                "two.example",
+                "",
+                "chatgpt.com",
+                "||cdn.*ads.^",
+            ),
+            lines,
+        )
+    }
+
+    /**
      * Путь импорта доменов в группы (HostsGeneratorViewModel.addDomains):
      * блокирующие строки 127.0.0.1/0.0.0.0 — это тоже домены, терять их нельзя.
      */
