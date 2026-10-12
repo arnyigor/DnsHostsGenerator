@@ -21,6 +21,8 @@ platform.openai.com
 tcr9i.chat.openai.com
 videos.openai.com
 sora.com
+oaistatic.com
+oaiusercontent.com
 
 # --- Google Gemini AI ---
 cdn.auth0.com
@@ -63,6 +65,7 @@ aitestkitchen.withgoogle.com
 csp.withgoogle.com
 stitch.withgoogle.com
 withgoogle.com
+labs.google.com
 
 # --- Microsoft Copilot Xbox ---
 azwindows.ipv6.microsoft.com.akadns.net
@@ -88,6 +91,7 @@ user.auth.xboxlive.com
 xgpuweb.gssv-play-prod.xboxlive.com
 xgpuwebf2p.gssv-play-prod.xboxlive.com
 xsts.auth.xboxlive.com
+designer.microsoft.com
 
 # --- GitHub ---
 api.github.com
@@ -104,12 +108,15 @@ console.anthropic.com
 s-cdn.anthropic.com
 a-cdn.claude.ai
 claude.ai
+claude.com
+claudemcpclient.com
 
 # --- X.ai Grok ---
 assets.grok.com
 grok.com
 accounts.x.ai
 grok-v2.x.ai
+grok.x.com
 
 # --- ElevenLabs ---
 api.elevenlabs.io
