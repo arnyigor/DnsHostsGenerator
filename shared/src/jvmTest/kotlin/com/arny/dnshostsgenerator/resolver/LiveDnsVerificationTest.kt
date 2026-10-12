@@ -1,6 +1,7 @@
 package com.arny.dnshostsgenerator.resolver
 
 import com.arny.dnshostsgenerator.data.BuiltInDnsPresets
+import com.arny.dnshostsgenerator.domain.DnsPresetUnusableException
 import com.arny.dnshostsgenerator.domain.GenerateHostsRequest
 import com.arny.dnshostsgenerator.domain.HostLine
 import com.arny.dnshostsgenerator.generator.HostsGenerator
@@ -145,24 +146,44 @@ class LiveDnsVerificationTest {
         }
 
         line("")
-        line("== 6. Что генератор пишет, если пресет вернул 0.0.0.0 (xbox-dns.ru) ==")
+        line("== 6. Пресет с null-route (xbox-dns.ru): генерация должна быть отменена ==")
         val xbox = BuiltInDnsPresets.defaults.first { it.primaryDns == "176.99.11.77" }
-        val xboxResult = HostsGenerator(resolver).generate(
-            presetTitle = xbox.title,
-            request = GenerateHostsRequest(
-                primaryDns = xbox.primaryDns,
-                primaryDotHost = xbox.dotHost,
-                checkDns = "8.8.8.8",
-                checkDotHost = "dns.google",
-                inputLines = listOf("chatgpt.com", "example.com"),
-                outputFileName = "live.txt",
-                dedupEnabled = true,
-            ),
+        val rawIps = resolver.resolveA(
+            domain = "chatgpt.com",
+            dnsServer = xbox.primaryDns,
+            timeoutMillis = 5_000,
+            options = DnsQueryOptions(xbox.dotHost, xbox.allowInvalidTls),
         )
-        xboxResult.lines.forEach { line("  ${it::class.simpleName}: ${it.toOutputLine()}") }
-        val nullRouted = xboxResult.lines.filterIsInstance<HostLine.Resolved>().filter { it.ip == "0.0.0.0" }
-        if (nullRouted.isNotEmpty()) {
-            line("  ! генератор пишет 0.0.0.0 в hosts — это блокировка домена, а не разблокировка")
+        val nullRouted = rawIps.isNotEmpty() && rawIps.all { it == "0.0.0.0" || it == "::" }
+        line("сырой ответ xbox-dns.ru на chatgpt.com: ${rawIps.joinToString()} → null-route=$nullRouted")
+        if (nullRouted) {
+            val attempt = runCatching {
+                HostsGenerator(resolver).generate(
+                    presetTitle = xbox.title,
+                    request = GenerateHostsRequest(
+                        primaryDns = xbox.primaryDns,
+                        primaryDotHost = xbox.dotHost,
+                        checkDns = "8.8.8.8",
+                        checkDotHost = "dns.google",
+                        inputLines = listOf("chatgpt.com", "openai.com"),
+                        outputFileName = "live.txt",
+                        dedupEnabled = true,
+                    ),
+                )
+            }
+            val error = attempt.exceptionOrNull()
+            line(
+                "реакция генератора: " + if (error == null) {
+                    "НЕ отменена, результат=${attempt.getOrNull()?.stats}"
+                } else {
+                    "${error::class.simpleName}: ${error.message}"
+                },
+            )
+            if (error !is DnsPresetUnusableException) {
+                failures += "пресет с null-route не отменил генерацию"
+            }
+        } else {
+            line("пресет сейчас отвечает нормально — проверка отмены неприменима")
         }
 
         line("")

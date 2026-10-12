@@ -8,6 +8,7 @@ import com.arny.dnshostsgenerator.data.db.DomainEntity
 import com.arny.dnshostsgenerator.data.db.GroupDao
 import com.arny.dnshostsgenerator.data.db.GroupEntity
 import com.arny.dnshostsgenerator.data.db.GroupWithDomains
+import com.arny.dnshostsgenerator.domain.DnsPresetUnusableException
 import com.arny.dnshostsgenerator.domain.DnsProviderPreset
 import com.arny.dnshostsgenerator.domain.GenerateHostsRequest
 import com.arny.dnshostsgenerator.domain.GenerationResult
@@ -396,37 +397,51 @@ class HostsGeneratorViewModel(
 
             try {
                 presets.forEachIndexed { index, preset ->
-                    val result = generator.generate(
-                        presetTitle = preset.title,
-                        request = GenerateHostsRequest(
-                            primaryDns = preset.primaryDns,
-                            primaryDotHost = preset.dotHost,
-                            primaryAllowInvalidTls = preset.allowInvalidTls,
-                            checkDns = preset.checkDns,
-                            inputLines = inputLines,
-                            outputFileName = preset.outputFileName,
-                            dedupEnabled = currentState.dedupEnabled,
-                        ),
-                    ) { progress ->
-                        val presetFraction = if (progress.totalLines > 0) {
-                            progress.processedLines.toFloat() / progress.totalLines
-                        } else {
-                            0f
+                    val result = try {
+                        generator.generate(
+                            presetTitle = preset.title,
+                            request = GenerateHostsRequest(
+                                primaryDns = preset.primaryDns,
+                                primaryDotHost = preset.dotHost,
+                                primaryAllowInvalidTls = preset.allowInvalidTls,
+                                checkDns = preset.checkDns,
+                                inputLines = inputLines,
+                                outputFileName = preset.outputFileName,
+                                dedupEnabled = currentState.dedupEnabled,
+                            ),
+                        ) { progress ->
+                            val presetFraction = if (progress.totalLines > 0) {
+                                progress.processedLines.toFloat() / progress.totalLines
+                            } else {
+                                0f
+                            }
+                            _state.update {
+                                it.copy(
+                                    progress = (index + presetFraction) / presets.size,
+                                    progressText = buildString {
+                                        if (presets.size > 1) {
+                                            append("${index + 1}/${presets.size} · ")
+                                        }
+                                        append("${preset.title}: ${progress.processedLines}/${progress.totalLines}")
+                                        progress.currentDomain?.let { domain ->
+                                            append(" — ").append(domain)
+                                        }
+                                    }
+                                )
+                            }
                         }
+                    } catch (unusable: DnsPresetUnusableException) {
+                        // Пресет отвечает 0.0.0.0 на всё — это блокировка, а не разблокировка.
+                        // Отменяем генерацию по нему, остальные пресеты доводим до конца.
+                        AppLogger.e("Preset unusable, generation cancelled: ${unusable.presetTitle}", unusable)
                         _state.update {
                             it.copy(
-                                progress = (index + presetFraction) / presets.size,
-                                progressText = buildString {
-                                    if (presets.size > 1) {
-                                        append("${index + 1}/${presets.size} · ")
-                                    }
-                                    append("${preset.title}: ${progress.processedLines}/${progress.totalLines}")
-                                    progress.currentDomain?.let { domain ->
-                                        append(" — ").append(domain)
-                                    }
-                                }
+                                statusText = "Пресет «${unusable.presetTitle}» сейчас не работает корректно: " +
+                                    "DNS отвечает 0.0.0.0 на все домены (${unusable.blockedCount}). " +
+                                    "Генерация по нему отменена — выбери другой DNS.",
                             )
                         }
+                        return@forEachIndexed
                     }
                     generatedResults += result
                     _state.update {

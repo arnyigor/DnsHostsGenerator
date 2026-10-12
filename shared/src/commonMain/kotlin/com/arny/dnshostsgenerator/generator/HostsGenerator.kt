@@ -1,5 +1,6 @@
 package com.arny.dnshostsgenerator.generator
 
+import com.arny.dnshostsgenerator.domain.DnsPresetUnusableException
 import com.arny.dnshostsgenerator.domain.GenerateHostsRequest
 import com.arny.dnshostsgenerator.domain.GenerationProgress
 import com.arny.dnshostsgenerator.domain.GenerationResult
@@ -20,6 +21,9 @@ import kotlinx.coroutines.sync.withPermit
 class HostsGenerator(
     private val dnsResolver: DnsResolver,
 ) {
+    /** Адреса-«обнуляторы»: такой ответ означает блокировку домена, а не разблокировку. */
+    private val nullRouteAddresses = setOf("0.0.0.0", "::", "0:0:0:0:0:0:0:0")
+
     /** Результат DNS-запросов для одного уникального домена. */
     private data class DomainLookup(
         val primaryIps: List<String>,
@@ -56,6 +60,7 @@ class HostsGenerator(
         var forwardedCount = 0
         var unresolvedCount = 0
         var duplicateCount = 0
+        var blockedCount = 0
 
         for (line in request.inputLines) {
             lineCount++
@@ -87,6 +92,18 @@ class HostsGenerator(
             if (primaryIps.isEmpty()) {
                 unresolvedCount++
                 outputLines += HostLine.Unresolved(domain)
+                continue
+            }
+
+            // 0.0.0.0/:: от DNS означает «домен заблокирован». Писать такое в hosts нельзя:
+            // цель приложения — найти адрес, по которому домен работает.
+            if (primaryIps.all { it in nullRouteAddresses }) {
+                blockedCount++
+                AppLogger.d(
+                    "Null-route answer excluded from hosts output: line=$lineCount, " +
+                        "domain=$domain, ips=${primaryIps.joinToString()}",
+                )
+                outputLines += HostLine.Blocked(domain)
                 continue
             }
 
@@ -124,12 +141,25 @@ class HostsGenerator(
             forwardedCount = forwardedCount,
             unresolvedCount = unresolvedCount,
             duplicateCount = duplicateCount,
+            blockedCount = blockedCount,
         )
+
+        // Пресет, который на всё ответил 0.0.0.0, сейчас не разблокирует ничего:
+        // отменяем генерацию по нему целиком, чтобы не отдать вредный hosts.
+        if (blockedCount > 0 && resolvedCount == 0 && forwardedCount == 0) {
+            AppLogger.e(
+                "Preset unusable: preset=$presetTitle, blockedDomains=$blockedCount, " +
+                    "lines=${stats.lineCount}",
+                DnsPresetUnusableException(presetTitle, blockedCount),
+            )
+            throw DnsPresetUnusableException(presetTitle, blockedCount)
+        }
+
         AppLogger.d(
             "Generation finished: preset=$presetTitle, output=${request.outputFileName}, " +
                 "lines=${stats.lineCount}, resolved=${stats.resolvedCount}, " +
                 "forwarded=${stats.forwardedCount}, unresolved=${stats.unresolvedCount}, " +
-                "duplicate=${stats.duplicateCount}",
+                "duplicate=${stats.duplicateCount}, blocked=${stats.blockedCount}",
         )
 
         return GenerationResult(

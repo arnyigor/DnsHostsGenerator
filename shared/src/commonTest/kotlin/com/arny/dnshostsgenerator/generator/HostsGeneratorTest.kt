@@ -1,7 +1,9 @@
 package com.arny.dnshostsgenerator.generator
 
+import com.arny.dnshostsgenerator.domain.DnsPresetUnusableException
 import com.arny.dnshostsgenerator.domain.GenerateHostsRequest
 import com.arny.dnshostsgenerator.domain.GenerationStats
+import com.arny.dnshostsgenerator.domain.HostLine
 import com.arny.dnshostsgenerator.resolver.DnsQueryOptions
 import com.arny.dnshostsgenerator.resolver.DnsResolver
 import com.arny.dnshostsgenerator.domain.GenerationProgress
@@ -9,6 +11,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -178,6 +181,100 @@ class HostsGeneratorTest {
         // Без дедупликации все строки остаются в выводе, но DNS-запрос выполняется один раз.
         assertEquals(List(3) { "10.0.0.1 a.example" }.joinToString("\n"), result.outputText)
         assertEquals(2, resolver.totalCalls)
+    }
+
+    /**
+     * 0.0.0.0/:: от DNS — это блокировка домена, а не разблокировка: в hosts такое писать нельзя.
+     * Живой пример: пресет xbox-dns.ru обнуляет chatgpt.com/openai.com/gemini.google.com.
+     */
+    @Test
+    fun generate_marksNullRoutedDomainAsBlockedAndKeepsOthers() = runBlocking {
+        val generator = HostsGenerator(
+            dnsResolver = FakeDnsResolver(
+                mapOf(
+                    "83.220.169.155" to mapOf(
+                        "blocked.example" to listOf("0.0.0.0"),
+                        "ok.example" to listOf("10.0.0.1"),
+                    ),
+                    "8.8.8.8" to mapOf(
+                        "blocked.example" to listOf("9.9.9.9"),
+                        "ok.example" to listOf("10.0.0.2"),
+                    ),
+                ),
+            ),
+        )
+
+        val result = generator.generate(
+            presetTitle = "Test DNS",
+            request = GenerateHostsRequest(
+                primaryDns = "83.220.169.155",
+                checkDns = "8.8.8.8",
+                inputLines = listOf("blocked.example", "ok.example"),
+                outputFileName = "hosts.txt",
+                dedupEnabled = false,
+            ),
+        )
+
+        assertEquals(1, result.stats.blockedCount)
+        assertEquals(1, result.stats.resolvedCount)
+        assertTrue(HostLine.Blocked("blocked.example") in result.lines)
+        assertTrue("#blocked blocked.example" in result.outputText)
+        assertFalse("0.0.0.0 blocked.example" in result.outputText)
+        assertTrue("10.0.0.1 ok.example" in result.outputText)
+    }
+
+    @Test
+    fun generate_cancelsPresetThatReturnsNullRouteForEverything() = runBlocking {
+        val generator = HostsGenerator(
+            dnsResolver = FakeDnsResolver(
+                mapOf(
+                    "176.99.11.77" to mapOf(
+                        "chatgpt.com" to listOf("0.0.0.0"),
+                        "openai.com" to listOf("0.0.0.0"),
+                    ),
+                    "8.8.8.8" to mapOf(
+                        "chatgpt.com" to listOf("1.2.3.4"),
+                        "openai.com" to listOf("1.2.3.5"),
+                    ),
+                ),
+            ),
+        )
+
+        val error = assertFailsWith<DnsPresetUnusableException> {
+            generator.generate(
+                presetTitle = "xbox-dns.ru",
+                request = GenerateHostsRequest(
+                    primaryDns = "176.99.11.77",
+                    checkDns = "8.8.8.8",
+                    inputLines = listOf("chatgpt.com", "openai.com"),
+                    outputFileName = "hosts.txt",
+                    dedupEnabled = false,
+                ),
+            )
+        }
+
+        assertEquals("xbox-dns.ru", error.presetTitle)
+        assertEquals(2, error.blockedCount)
+    }
+
+    /** Полностью недоступный DNS — это не «пресет врёт», отменять генерацию не надо. */
+    @Test
+    fun generate_doesNotCancelWhenNothingResolvedAtAll() = runBlocking {
+        val generator = HostsGenerator(dnsResolver = FakeDnsResolver(emptyMap()))
+
+        val result = generator.generate(
+            presetTitle = "Test DNS",
+            request = GenerateHostsRequest(
+                primaryDns = "83.220.169.155",
+                checkDns = "8.8.8.8",
+                inputLines = listOf("none.example"),
+                outputFileName = "hosts.txt",
+                dedupEnabled = false,
+            ),
+        )
+
+        assertEquals(1, result.stats.unresolvedCount)
+        assertEquals(0, result.stats.blockedCount)
     }
 
     @Test

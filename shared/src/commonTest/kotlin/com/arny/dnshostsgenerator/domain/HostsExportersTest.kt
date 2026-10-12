@@ -15,15 +15,25 @@ class HostsExportersTest {
             HostLine.Forwarded("forwarded.example", listOf("1.1.1.1"), listOf("1.1.1.1")),
             HostLine.Unresolved("unresolved.example"),
             HostLine.Duplicate("chatgpt.com"),
+            HostLine.Blocked("nullroute.example"),
         ),
         stats = GenerationStats(
-            lineCount = 6,
+            lineCount = 7,
             resolvedCount = 2,
             forwardedCount = 1,
             unresolvedCount = 1,
             duplicateCount = 1,
+            blockedCount = 1,
         ),
     )
+
+    @Test
+    fun nonHostsFormatsExcludeNullRoutedAndServiceLines() {
+        assertEquals(false, result.exportText(ExportFormat.DNSMASQ).contains("nullroute.example"))
+        assertEquals(false, result.exportText(ExportFormat.ADGUARD).contains("nullroute.example"))
+        assertEquals(false, result.exportText(ExportFormat.NEXTDNS).contains("nullroute.example"))
+        assertEquals(false, result.exportText(ExportFormat.ADGUARD).contains("forwarded.example"))
+    }
 
     @Test
     fun hostsFormatIsTheNativeOutput() {

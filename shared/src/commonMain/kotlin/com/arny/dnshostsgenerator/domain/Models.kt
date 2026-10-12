@@ -125,6 +125,14 @@ sealed interface HostLine {
     data class Duplicate(val domain: String) : HostLine {
         override fun toOutputLine(): String = "#duplicate $domain"
     }
+
+    /**
+     * Пресет вернул null-route (0.0.0.0/::): это блокировка домена, а не разблокировка.
+     * В hosts такую строку писать нельзя — приложение ищет адрес, по которому домен работает.
+     */
+    data class Blocked(val domain: String) : HostLine {
+        override fun toOutputLine(): String = "#blocked $domain"
+    }
 }
 
 data class GenerationStats(
@@ -133,12 +141,14 @@ data class GenerationStats(
     val forwardedCount: Int,
     val unresolvedCount: Int,
     val duplicateCount: Int,
+    /** Сколько доменов DNS пресета обнулил (0.0.0.0/::) — в hosts они не попадают. */
+    val blockedCount: Int = 0,
 ) {
     val activeHostsCount: Int
         get() = resolvedCount
 
     val domainResultCount: Int
-        get() = resolvedCount + forwardedCount + unresolvedCount + duplicateCount
+        get() = resolvedCount + forwardedCount + unresolvedCount + duplicateCount + blockedCount
 
     /**
      * Признак вероятного перехвата DNS-запросов: почти все домены помечены #forwarded,
@@ -150,6 +160,18 @@ data class GenerationStats(
             return meaningful > 0 && forwardedCount.toDouble() / meaningful >= 0.9
         }
 }
+
+/**
+ * Пресет нельзя использовать: на все домены, которые он вообще разрешил, он ответил
+ * null-route (0.0.0.0/::). Такой DNS сейчас не разблокирует домены, а блокирует их.
+ * Генерация по пресету отменяется, чтобы не отдать пользователю вредный hosts.
+ */
+class DnsPresetUnusableException(
+    val presetTitle: String,
+    val blockedCount: Int,
+) : Exception(
+    "DNS «$presetTitle» отвечает 0.0.0.0 на все домены ($blockedCount) — пресет сейчас не работает корректно",
+)
 
 data class GenerationResult(
     val presetTitle: String,
