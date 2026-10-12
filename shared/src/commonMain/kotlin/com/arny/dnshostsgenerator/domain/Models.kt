@@ -16,7 +16,13 @@ data class DnsProviderPreset(
     val allowInvalidTls: Boolean = false,
     val checkDns: String = "8.8.8.8",
     val outputFileName: String,
+    /**
+     * false — пресет отключён и не может быть выбран для генерации
+     * (провайдер сломан или не подходит для разблокировки ИИ). Остальные пресеты это не затрагивает.
+     */
     val enabledByDefault: Boolean = true,
+    /** Почему пресет отключён — показывается в списке вместо обычной подписи. */
+    val disabledReason: String? = null,
 ) {
     companion object {
         /**

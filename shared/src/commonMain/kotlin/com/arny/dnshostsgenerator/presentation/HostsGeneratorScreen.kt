@@ -1301,6 +1301,8 @@ private fun PresetRow(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Отключённый пресет виден в списке, но выбрать его нельзя — и с причиной отказа.
+    val disabled = !preset.enabledByDefault
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -1308,6 +1310,7 @@ private fun PresetRow(
             .toggleable(
                 value = checked,
                 role = Role.Checkbox,
+                enabled = !disabled,
                 onValueChange = onCheckedChange,
             )
             .padding(
@@ -1319,6 +1322,7 @@ private fun PresetRow(
         Checkbox(
             checked = checked,
             onCheckedChange = null,
+            enabled = !disabled,
         )
         Spacer(modifier = Modifier.width(12.dp))
         Column(
@@ -1329,12 +1333,21 @@ private fun PresetRow(
                 text = preset.title,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Medium,
+                color = if (disabled) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
             )
             Text(
-                text = buildString {
-                    append(preset.dotHost ?: preset.primaryDns)
-                    append(" • проверка через ")
-                    append(preset.checkDns)
+                text = if (disabled && preset.disabledReason != null) {
+                    "отключён: ${preset.disabledReason}"
+                } else {
+                    buildString {
+                        append(preset.dotHost ?: preset.primaryDns)
+                        append(" • проверка через ")
+                        append(preset.checkDns)
+                    }
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

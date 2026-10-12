@@ -60,6 +60,11 @@ object BuiltInDnsPresets {
             // DoT xbox-dns.ru отвечает только по hostname (raw IP 176.99.11.77:853 не слушает).
             dotHost = "xbox-dns.ru",
             outputFileName = "host_out_xbox-dns.ru.txt",
+            // 12.10.2026 живой DoT-запрос: chatgpt.com / openai.com / gemini.google.com → 0.0.0.0,
+            // то есть провайдер обнуляет ИИ-домены, а не разблокирует их. Для игровых доменов
+            // он при этом работает, поэтому пресет выключен, а не удалён.
+            enabledByDefault = false,
+            disabledReason = "отвечает 0.0.0.0 на ИИ-домены (проверено 12.10.2026) — для разблокировки ИИ не подходит",
         ),
     )
 }

@@ -58,9 +58,10 @@ data class HostsGeneratorState(
 ) {
     val selectedPresets: List<DnsProviderPreset>
         get() = if (selectedPresetIds.isEmpty()) {
-            presets.filter { it.id == BuiltInDnsPresets.RECOMMENDED_ID }
+            presets.filter { it.id == BuiltInDnsPresets.RECOMMENDED_ID && it.enabledByDefault }
         } else {
-            presets.filter { it.id in selectedPresetIds }
+            // Отключённые пресеты не участвуют в генерации, даже если остались в выбранных.
+            presets.filter { it.id in selectedPresetIds && it.enabledByDefault }
         }
 }
 
@@ -130,14 +131,24 @@ class HostsGeneratorViewModel(
             is HostsGeneratorEvent.OnDeleteDomain -> deleteDomain(event.domainId)
             is HostsGeneratorEvent.OnDedupChanged -> _state.update { it.copy(dedupEnabled = event.enabled) }
             is HostsGeneratorEvent.OnSelectResult -> _state.update { it.copy(selectedResultIndex = event.index) }
-            is HostsGeneratorEvent.OnPresetChecked -> _state.update {
-                val newIds =
-                    if (event.checked) it.selectedPresetIds + event.id else it.selectedPresetIds - event.id
-                it.copy(selectedPresetIds = newIds)
+            is HostsGeneratorEvent.OnPresetChecked -> _state.update { state ->
+                val preset = state.presets.firstOrNull { it.id == event.id }
+                if (preset != null && !preset.enabledByDefault) {
+                    // Отключённый пресет нельзя включить галочкой: говорим почему и ничего не меняем.
+                    state.copy(
+                        statusText = "Пресет «${preset.title}» отключён: " +
+                            (preset.disabledReason ?: "провайдер сейчас не работает корректно"),
+                    )
+                } else {
+                    val newIds =
+                        if (event.checked) state.selectedPresetIds + event.id
+                        else state.selectedPresetIds - event.id
+                    state.copy(selectedPresetIds = newIds)
+                }
             }
 
             HostsGeneratorEvent.OnSelectAllPresets -> _state.update {
-                it.copy(selectedPresetIds = it.presets.map { preset -> preset.id }.toSet())
+                it.copy(selectedPresetIds = it.presets.filter { preset -> preset.enabledByDefault }.map { preset -> preset.id }.toSet())
             }
 
             HostsGeneratorEvent.OnClearPresets -> _state.update {
