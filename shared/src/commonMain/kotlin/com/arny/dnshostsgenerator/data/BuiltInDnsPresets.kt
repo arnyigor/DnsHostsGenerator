@@ -32,6 +32,10 @@ object BuiltInDnsPresets {
             title = "dns.geohide.ru",
             primaryDns = "dns.geohide.ru",
             outputFileName = "host_out_dns.geohide.ru.txt",
+            // 23.10.2026: ответ приходил за 28 с (таймаут запроса 5 с), а вернувшиеся адреса
+            // 193.233.112.x не открывались по TCP:443 ни для одного ИИ-домена.
+            enabledByDefault = false,
+            disabledReason = "отдаёт недостижимые адреса и не укладывается в таймаут (проверено 23.10.2026)",
         ),
         DnsProviderPreset(
             id = "dns_mafioznik_xyz",
@@ -46,6 +50,10 @@ object BuiltInDnsPresets {
             title = "dns.malw.link",
             primaryDns = "dns.malw.link",
             outputFileName = "host_out_dns.malw.link.txt",
+            // 23.10.2026: DoT отвечает, но 179.254.166.174 не открывал TCP:443 ни для
+            // chatgpt.com, ни для gemini/api.anthropic/claude.ai — в hosts попадал мёртвый адрес.
+            enabledByDefault = false,
+            disabledReason = "отдаёт недостижимый адрес 179.254.166.174 (проверено 23.10.2026)",
         ),
         DnsProviderPreset(
             id = "free_shecan_ir",
@@ -60,6 +68,9 @@ object BuiltInDnsPresets {
             title = "pro.shecan.ir",
             primaryDns = "pro.shecan.ir",
             outputFileName = "host_out_pro.shecan.ir.txt",
+            // 23.10.2026: адреса 50.7.177.x / 94.130.x / 138.201.x не открывались по TCP:443.
+            enabledByDefault = false,
+            disabledReason = "отдаёт недостижимые адреса (проверено 23.10.2026)",
         ),
         DnsProviderPreset(
             id = "dns_zapret_moe",

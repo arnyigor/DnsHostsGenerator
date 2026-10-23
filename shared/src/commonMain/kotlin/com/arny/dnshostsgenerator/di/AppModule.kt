@@ -7,6 +7,7 @@ import com.arny.dnshostsgenerator.nextdns.NextDnsClient
 import com.arny.dnshostsgenerator.nextdns.NextDnsImportViewModel
 import com.arny.dnshostsgenerator.presentation.HostsGeneratorViewModel
 import com.arny.dnshostsgenerator.resolver.createDnsResolver
+import com.arny.dnshostsgenerator.resolver.createIpValidator
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
 
@@ -17,7 +18,7 @@ val appModule = module {
     single { get<AppDatabase>().groupDao() }
 
     // get() автоматически подставит DnsResolver, который мы зарегистрировали выше
-    single { HostsGenerator(get()) }
+    single { HostsGenerator(get(), createIpValidator()) }
 
     // NextDNS integration
     single { NextDnsClient() }

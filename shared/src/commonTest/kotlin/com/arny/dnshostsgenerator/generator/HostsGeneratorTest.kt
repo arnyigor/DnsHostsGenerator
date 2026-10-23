@@ -6,6 +6,8 @@ import com.arny.dnshostsgenerator.domain.GenerationStats
 import com.arny.dnshostsgenerator.domain.HostLine
 import com.arny.dnshostsgenerator.resolver.DnsQueryOptions
 import com.arny.dnshostsgenerator.resolver.DnsResolver
+import com.arny.dnshostsgenerator.resolver.IpCheckResult
+import com.arny.dnshostsgenerator.resolver.IpValidator
 import com.arny.dnshostsgenerator.domain.GenerationProgress
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -23,7 +25,7 @@ class HostsGeneratorTest {
             dnsResolver = FakeDnsResolver(
                 records = mapOf(
                     "1.1.1.1" to mapOf(
-                        "forwarded.example" to listOf("10.0.0.1", "10.0.0.2"),
+                        "forwarded.example" to listOf("10.0.0.2"),
                         "resolved.example" to listOf("10.0.0.3"),
                         "unresolved.example" to emptyList(),
                         "duplicate.example" to listOf("10.0.0.4"),
@@ -133,6 +135,132 @@ class HostsGeneratorTest {
         // Разные IP у primary/check -> домен резолвится в hosts.
         assertEquals("10.0.0.1 example.com", result.outputText)
         assertEquals(1, result.stats.resolvedCount)
+    }
+
+    /**
+     * Частичное совпадение с check-DNS — рабочий случай, а не #forwarded: dns.comss.one на
+     * chatgpt.com отвечает общим прокси провайдера и собственным адресом (замер 23.10.2026).
+     */
+    @Test
+    fun generate_keepsProxyIpWhenOnlyPartOfAnswerCoincidesWithCheck() = runBlocking {
+        val generator = HostsGenerator(
+            dnsResolver = FakeDnsResolver(
+                mapOf(
+                    "83.220.169.155" to mapOf("chatgpt.com" to listOf("80.74.30.162", "132.243.113.26")),
+                    "8.8.8.8" to mapOf("chatgpt.com" to listOf("80.74.30.162")),
+                ),
+            ),
+        )
+
+        val result = generator.generate(
+            presetTitle = "dns.comss.one",
+            request = GenerateHostsRequest(
+                primaryDns = "83.220.169.155",
+                checkDns = "8.8.8.8",
+                inputLines = listOf("chatgpt.com"),
+                outputFileName = "hosts.txt",
+                dedupEnabled = false,
+            ),
+        )
+
+        // Адрес проверочного DNS отброшен, в hosts идёт собственный адрес пресета.
+        assertEquals("132.243.113.26 chatgpt.com", result.outputText)
+        assertEquals(0, result.stats.forwardedCount)
+        assertEquals(1, result.stats.resolvedCount)
+    }
+
+    /** Адрес, подтверждённый TLS-проверкой, предпочитается первому адресу из ответа DNS. */
+    @Test
+    fun generate_prefersIpConfirmedByTlsValidator() = runBlocking {
+        val validator = FakeIpValidator(confirmed = setOf("10.0.0.2"))
+        val generator = HostsGenerator(
+            dnsResolver = FakeDnsResolver(
+                mapOf(
+                    "1.1.1.1" to mapOf("ai.example" to listOf("10.0.0.1", "10.0.0.2")),
+                    "8.8.8.8" to mapOf("ai.example" to listOf("9.9.9.9")),
+                ),
+            ),
+            ipValidator = validator,
+        )
+
+        val result = generator.generate(
+            presetTitle = "Test DNS",
+            request = GenerateHostsRequest(
+                primaryDns = "1.1.1.1",
+                checkDns = "8.8.8.8",
+                inputLines = listOf("ai.example"),
+                outputFileName = "hosts.txt",
+                dedupEnabled = false,
+            ),
+        )
+
+        assertEquals("10.0.0.2 ai.example", result.outputText)
+        assertEquals(listOf("10.0.0.1", "10.0.0.2"), validator.checked)
+    }
+
+    /**
+     * Медленный прокси: на быстрой проверке таймаут, на повторной — подтверждение.
+     * Живой пример: 199.189.249.126 для gemini.google.com отдаёт TLS-хендшейк за ~10 с.
+     */
+    @Test
+    fun generate_retriesSlowCandidateWithLongerTimeout() = runBlocking {
+        val validator = FakeIpValidator(confirmed = setOf("10.0.0.9"))
+        val generator = HostsGenerator(
+            dnsResolver = FakeDnsResolver(
+                mapOf(
+                    "1.1.1.1" to mapOf("gemini.example" to listOf("10.0.0.9")),
+                    "8.8.8.8" to mapOf("gemini.example" to listOf("9.9.9.9")),
+                ),
+            ),
+            ipValidator = validator,
+        )
+
+        val result = generator.generate(
+            presetTitle = "Test DNS",
+            request = GenerateHostsRequest(
+                primaryDns = "1.1.1.1",
+                checkDns = "8.8.8.8",
+                inputLines = listOf("gemini.example"),
+                outputFileName = "hosts.txt",
+                dedupEnabled = false,
+            ),
+        )
+
+        assertEquals("10.0.0.9 gemini.example", result.outputText)
+        assertEquals(1, result.stats.resolvedCount)
+    }
+
+    /**
+     * Если ни один адрес не подтвердился, мёртвый адрес в hosts не пишется — домен уходит
+     * в #unresolvedDomain: hosts с недостижимым IP хуже, чем честно пустой результат.
+     * Живой пример: dns.comss.one отдаёт для gemini.google.com адрес, который не отвечает.
+     */
+    @Test
+    fun generate_marksDomainUnresolvedWhenNoIpConfirmed() = runBlocking {
+        val generator = HostsGenerator(
+            dnsResolver = FakeDnsResolver(
+                mapOf(
+                    "1.1.1.1" to mapOf("ai.example" to listOf("10.0.0.1")),
+                    "8.8.8.8" to mapOf("ai.example" to listOf("9.9.9.9")),
+                ),
+            ),
+            ipValidator = FakeIpValidator(confirmed = emptySet()),
+        )
+
+        val result = generator.generate(
+            presetTitle = "Test DNS",
+            request = GenerateHostsRequest(
+                primaryDns = "1.1.1.1",
+                checkDns = "8.8.8.8",
+                inputLines = listOf("ai.example"),
+                outputFileName = "hosts.txt",
+                dedupEnabled = false,
+            ),
+        )
+
+        assertEquals("#unresolvedDomain ai.example", result.outputText)
+        assertEquals(0, result.stats.resolvedCount)
+        assertEquals(1, result.stats.unresolvedCount)
     }
 
     @Test
@@ -364,5 +492,22 @@ private class ConcurrencyTrackingFake : DnsResolver {
         delay(10)
         inFlight--
         return if (dnsServer == "1.1.1.1") listOf("10.0.0.1") else listOf("10.0.0.2")
+    }
+}
+
+/** Фейк TLS-проверки: «обслуживают домен» только перечисленные адреса. */
+private class FakeIpValidator(
+    private val confirmed: Set<String>,
+    private val unknown: Set<String> = emptySet(),
+) : IpValidator {
+    val checked = mutableListOf<String>()
+
+    override suspend fun check(domain: String, ip: String, timeoutMillis: Int): IpCheckResult {
+        if (ip !in checked) checked += ip
+        return when {
+            ip in confirmed -> IpCheckResult.SERVES
+            ip in unknown -> IpCheckResult.UNKNOWN
+            else -> IpCheckResult.REJECTED
+        }
     }
 }

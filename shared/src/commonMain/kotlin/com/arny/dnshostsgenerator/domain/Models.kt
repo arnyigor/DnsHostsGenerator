@@ -90,8 +90,12 @@ data class GenerateHostsRequest(
     val preserveComments: Boolean = true,
     val preserveBlankLines: Boolean = true,
     val timeoutMillis: Int = 5_000,
+    /** Таймаут TLS-проверки адреса (TLS+SNI на 443) для одного IP домена. */
+    val ipValidationTimeoutMillis: Int = 2_500,
+    /** Повтор для адресов, не ответивших на быструю проверку (медленные прокси ~10 с). */
+    val ipValidationRetryTimeoutMillis: Int = 12_000,
     /** Сколько доменов резолвится одновременно. */
-    val concurrency: Int = 16,
+    val concurrency: Int = 32,
 )
 
 sealed interface HostLine {
