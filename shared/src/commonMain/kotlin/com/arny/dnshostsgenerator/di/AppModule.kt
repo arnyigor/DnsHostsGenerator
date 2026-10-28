@@ -1,5 +1,7 @@
 package com.arny.dnshostsgenerator.di
 
+import com.arny.dnshostsgenerator.controld.ControlDClient
+import com.arny.dnshostsgenerator.controld.ControlDImportViewModel
 import com.arny.dnshostsgenerator.data.db.AppDatabase
 import com.arny.dnshostsgenerator.domain.DnsChecker
 import com.arny.dnshostsgenerator.data.db.createAppDatabase
@@ -24,8 +26,10 @@ val appModule = module {
 
     // NextDNS integration
     single { NextDnsClient() }
+    single { ControlDClient() }
 
     // Регистрация ViewModel (специфичный DSL для поддержки жизненного цикла)
     viewModel { HostsGeneratorViewModel(get(), get(), get()) }
     viewModel { NextDnsImportViewModel(get()) }
+    viewModel { ControlDImportViewModel(get()) }
 }
