@@ -15,6 +15,11 @@ package com.arny.dnshostsgenerator.resolver
 data class DnsQueryOptions(
     val dotHost: String? = null,
     val allowInvalidTls: Boolean = false,
+    /**
+     * Разрешить fallback на plain UDP:53, если DoT недоступен. Чекеру DNS это не нужно:
+     * на сетях с перехватом UDP:53 ответ приходит от чужого резолвера, и проверка врёт.
+     */
+    val allowPlainFallback: Boolean = true,
 )
 
 interface DnsResolver {

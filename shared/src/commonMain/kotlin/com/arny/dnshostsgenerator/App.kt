@@ -18,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import com.arny.dnshostsgenerator.navigation.AppNavigation
 import com.arny.dnshostsgenerator.nextdns.NextDnsImportViewModel
+import com.arny.dnshostsgenerator.presentation.HostsGeneratorEvent
 import com.arny.dnshostsgenerator.presentation.HostsGeneratorViewModel
 import com.arny.dnshostsgenerator.presentation.LocalSnackbarHostState
 import com.arny.dnshostsgenerator.presentation.UiEffect
@@ -44,6 +45,7 @@ fun AppContent() {
 
     val nextDnsImportViewModel: NextDnsImportViewModel = koinViewModel()
     val nextDnsImportState by nextDnsImportViewModel.state.collectAsState()
+
 
     // Snackbar вместо платформенных уведомлений: на desktop они открывали модальное окно
     // или добавляли новую иконку в системный трей на каждое сообщение.
@@ -72,6 +74,12 @@ fun AppContent() {
                 onHostsGeneratorEvent = hostsGeneratorViewModel::onEvent,
                 nextDnsImportState = nextDnsImportState,
                 onNextDnsImportEvent = nextDnsImportViewModel::onEvent,
+                dnsCheckState = hostsGeneratorState.dnsCheck,
+                onDnsCheckDomainChanged = {
+                    hostsGeneratorViewModel.onEvent(HostsGeneratorEvent.OnDnsCheckDomainChanged(it))
+                },
+                onDnsCheckRun = { hostsGeneratorViewModel.onEvent(HostsGeneratorEvent.OnDnsCheck) },
+                onDnsCheckCancel = { hostsGeneratorViewModel.onEvent(HostsGeneratorEvent.OnDnsCheckCancel) },
                 modifier = Modifier.padding(innerPadding),
             )
         }

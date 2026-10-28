@@ -11,6 +11,8 @@ import com.arny.dnshostsgenerator.nextdns.NextDnsImportState
 import com.arny.dnshostsgenerator.nextdns.NextDnsQuickImportCard
 import com.arny.dnshostsgenerator.nextdns.quickImportSource
 import com.arny.dnshostsgenerator.platform.isMobilePlatform
+import com.arny.dnshostsgenerator.presentation.DnsCheckCard
+import com.arny.dnshostsgenerator.presentation.DnsCheckUiState
 import com.arny.dnshostsgenerator.presentation.HostsGeneratorEvent
 import com.arny.dnshostsgenerator.presentation.HostsGeneratorScreen
 import com.arny.dnshostsgenerator.presentation.HostsGeneratorState
@@ -26,6 +28,10 @@ fun AppNavigation(
     onHostsGeneratorEvent: (HostsGeneratorEvent) -> Unit,
     nextDnsImportState: NextDnsImportState,
     onNextDnsImportEvent: (NextDnsImportEvent) -> Unit,
+    dnsCheckState: DnsCheckUiState,
+    onDnsCheckDomainChanged: (String) -> Unit,
+    onDnsCheckRun: () -> Unit,
+    onDnsCheckCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val navController = rememberNavController()
@@ -51,6 +57,14 @@ fun AppNavigation(
                     }
                 } else {
                     null
+                },
+                dnsCheck = {
+                    DnsCheckCard(
+                        state = dnsCheckState,
+                        onDomainChanged = onDnsCheckDomainChanged,
+                        onRunCheck = onDnsCheckRun,
+                        onCancelCheck = onDnsCheckCancel,
+                    )
                 },
             )
         }

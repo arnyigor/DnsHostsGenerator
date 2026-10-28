@@ -50,7 +50,9 @@ class LiveDnsVerificationTest {
 
         line("== 1. Пресеты: резолв через приложение (DoT + fallback) ==")
         line(String.format("%-34s %-7s %-18s %-26s %s", "пресет", "мс", "IP", "ошибка", "strict-TLS к dotHost:853"))
-        BuiltInDnsPresets.defaults.forEach { preset ->
+        // Отключённые пресеты не проверяются: пользователь их выбрать не может, а их серверы
+        // могут вообще не принимать соединение (зависание на TCP-connect без таймаута).
+        BuiltInDnsPresets.defaults.filter { it.enabledByDefault }.forEach { preset ->
             val started = System.currentTimeMillis()
             val attempt = runCatching {
                 resolver.resolveA(

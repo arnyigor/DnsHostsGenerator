@@ -19,7 +19,13 @@ class DisabledPresetsTest {
         // 23.10.2026 по живым замерам отключены провайдеры, которые либо не отвечают,
         // либо отдают недостижимые адреса: geohide, malw.link, pro.shecan.ir (+ xbox-dns.ru).
         assertEquals(
-            listOf("dns_geohide_ru", "dns_malw_link", "pro_shecan_ir", "xbox_dns_ru"),
+            listOf(
+                "dns_geohide_ru",
+                "dns_us_geohide_ru",
+                "dns_malw_link",
+                "pro_shecan_ir",
+                "xbox_dns_ru",
+            ),
             disabled.map { it.id },
         )
         disabled.forEach { preset ->
@@ -43,9 +49,11 @@ class DisabledPresetsTest {
                 "dns_bezmezhau_com",
                 "dns_astracat_ru",
                 "dns_comss_one",
+                "dns_eu_geohide_ru",
                 "dns_mafioznik_xyz",
                 "free_shecan_ir",
                 "dns_zapret_moe",
+                "dns_wlrus_cfd",
             ),
             enabled,
         )

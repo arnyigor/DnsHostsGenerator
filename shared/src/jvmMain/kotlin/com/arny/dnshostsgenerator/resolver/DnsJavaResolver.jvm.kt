@@ -81,6 +81,11 @@ private class DnsJavaResolver : DnsResolver {
             return dotResult
         }
 
+        if (!options.allowPlainFallback) {
+            AppLogger.d("DoT failed and plain fallback disabled: domain=$domain, dotHost=$dotHost")
+            return emptyList()
+        }
+
         // Fallback на legacy plain DNS (прежнее поведение).
         return resolveA(domain, dnsServer, timeoutMillis)
     }
@@ -95,7 +100,17 @@ private class DnsJavaResolver : DnsResolver {
             "DNS query started (DoT): type=A, domain=$domain, dotHost=$dotHost, " +
                 "timeoutMs=$timeoutMillis, allowInvalidTls=$allowInvalidTls",
         )
-        val socket = socketFactory(allowInvalidTls).createSocket(dotHost, DOT_PORT) as SSLSocket
+        // TCP-соединение с таймаутом: createSocket(host, port) коннектится без него, и мёртвый
+        // DoT-сервер (dns.us.geohide.ru) вешал генерацию на дефолтный SYN-таймаут ОС.
+        val raw = java.net.Socket()
+        try {
+            raw.connect(java.net.InetSocketAddress(dotHost, DOT_PORT), timeoutMillis)
+        } catch (error: Exception) {
+            runCatching { raw.close() }
+            throw error
+        }
+        val socket = socketFactory(allowInvalidTls)
+            .createSocket(raw, dotHost, DOT_PORT, true) as SSLSocket
         try {
             socket.soTimeout = timeoutMillis
             if (!allowInvalidTls) {

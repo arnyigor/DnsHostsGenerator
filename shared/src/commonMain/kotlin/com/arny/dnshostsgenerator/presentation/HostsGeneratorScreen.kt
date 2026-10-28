@@ -105,6 +105,7 @@ fun HostsGeneratorScreen(
     state: HostsGeneratorState,
     onEvent: (HostsGeneratorEvent) -> Unit,
     nextDnsQuickImport: (@Composable () -> Unit)? = null,
+    dnsCheck: (@Composable () -> Unit)? = null,
 ) {
     val clipboardManager = LocalClipboardManager.current
 
@@ -147,6 +148,7 @@ fun HostsGeneratorScreen(
         onSaveTextFile = { fileName, content -> onEvent(HostsGeneratorEvent.OnSaveTextFile(fileName, content)) },
         onUpdateSystemHosts = { content -> onEvent(HostsGeneratorEvent.OnUpdateSystemHosts(content)) },
         nextDnsQuickImport = nextDnsQuickImport,
+        dnsCheck = dnsCheck,
     )
 }
 
@@ -190,6 +192,8 @@ fun HostsGeneratorScreen(
      * на отдельный экран NextDNS не показывается.
      */
     nextDnsQuickImport: (@Composable () -> Unit)? = null,
+    /** Блок «Проверка DNS» (массовая проверка серверов). */
+    dnsCheck: (@Composable () -> Unit)? = null,
 ) {
     val selectedPresetsCount = if (selectedPresetIds.isEmpty() && presets.isNotEmpty()) {
         1
@@ -212,6 +216,7 @@ fun HostsGeneratorScreen(
             modifier: Modifier,
             domainEditorModifier: Modifier,
             extraContent: (@Composable () -> Unit)? = null,
+            dnsCheck: (@Composable () -> Unit)? = null,
         ) {
             ControlsPanel(
                 modifier = modifier,
@@ -244,6 +249,7 @@ fun HostsGeneratorScreen(
                 onCancelGeneration = onCancelGeneration,
                 extraContent = extraContent,
                 compact = compact,
+                dnsCheck = dnsCheck,
             )
         }
 
@@ -283,6 +289,7 @@ fun HostsGeneratorScreen(
                     domainEditorModifier = Modifier
                         .fillMaxWidth()
                         .height(480.dp),
+                    dnsCheck = dnsCheck,
                 )
                 Results(
                     modifier = Modifier
@@ -305,6 +312,7 @@ fun HostsGeneratorScreen(
                         .fillMaxWidth()
                         .weight(1f),
                     extraContent = nextDnsQuickImport,
+                    dnsCheck = dnsCheck,
                 )
                 Results(
                     modifier = Modifier
@@ -348,6 +356,7 @@ private fun ControlsPanel(
     onCancelGeneration: () -> Unit,
     extraContent: (@Composable () -> Unit)?,
     compact: Boolean,
+    dnsCheck: (@Composable () -> Unit)? = null,
 ) {
     var presetsExpanded by rememberSaveable { mutableStateOf(false) }
 
@@ -367,6 +376,7 @@ private fun ControlsPanel(
             onSelectRecommended = onSelectRecommended,
             onSelectAll = onSelectAll,
         )
+        dnsCheck?.invoke()
         Row(
             modifier = Modifier
                 .fillMaxWidth()

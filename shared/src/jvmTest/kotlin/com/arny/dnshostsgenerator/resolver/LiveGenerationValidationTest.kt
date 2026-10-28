@@ -26,7 +26,9 @@ class LiveGenerationValidationTest {
             println("LiveGenerationValidationTest пропущен: DNSHOSTS_LIVE != 1")
             return@runBlocking
         }
-        val preset = BuiltInDnsPresets.defaults.first { it.id == BuiltInDnsPresets.RECOMMENDED_ID }
+        // Пресет можно выбрать через DNSHOSTS_PRESET (id из BuiltInDnsPresets), по умолчанию рекомендуемый.
+        val presetId = System.getenv("DNSHOSTS_PRESET") ?: BuiltInDnsPresets.RECOMMENDED_ID
+        val preset = BuiltInDnsPresets.defaults.first { it.id == presetId }
         val domains = DefaultDomainList.text.lineSequence()
             .map { it.trim() }
             .filter { it.isNotEmpty() && !it.startsWith("#") }
@@ -59,7 +61,9 @@ class LiveGenerationValidationTest {
             println("LiveGenerationValidationTest пропущен: DNSHOSTS_LIVE != 1")
             return@runBlocking
         }
-        val preset = BuiltInDnsPresets.defaults.first { it.id == BuiltInDnsPresets.RECOMMENDED_ID }
+        // Пресет можно выбрать через DNSHOSTS_PRESET (id из BuiltInDnsPresets), по умолчанию рекомендуемый.
+        val presetId = System.getenv("DNSHOSTS_PRESET") ?: BuiltInDnsPresets.RECOMMENDED_ID
+        val preset = BuiltInDnsPresets.defaults.first { it.id == presetId }
         val validator = createIpValidator()
         val generator = HostsGenerator(createDnsResolver(), validator)
 

@@ -8,6 +8,9 @@ import com.arny.dnshostsgenerator.data.db.DomainEntity
 import com.arny.dnshostsgenerator.data.db.GroupDao
 import com.arny.dnshostsgenerator.data.db.GroupEntity
 import com.arny.dnshostsgenerator.data.db.GroupWithDomains
+import com.arny.dnshostsgenerator.domain.DnsCheckResult
+import com.arny.dnshostsgenerator.domain.DnsCheckStatus
+import com.arny.dnshostsgenerator.domain.DnsChecker
 import com.arny.dnshostsgenerator.domain.DnsPresetUnusableException
 import com.arny.dnshostsgenerator.domain.DnsProviderPreset
 import com.arny.dnshostsgenerator.domain.GenerateHostsRequest
@@ -54,7 +57,9 @@ data class HostsGeneratorState(
     val statusText: String = "По умолчанию выбран один рекомендуемый DNS. Остальные нужны только для сравнения.",
     val results: List<GenerationResult> = emptyList(),
     val selectedResultIndex: Int = 0,
-    val toastText: String? = null
+    val toastText: String? = null,
+    /** Блок «Проверка DNS»: какой сервер сейчас реально работает. */
+    val dnsCheck: DnsCheckUiState = DnsCheckUiState(),
 ) {
     val selectedPresets: List<DnsProviderPreset>
         get() = if (selectedPresetIds.isEmpty()) {
@@ -86,6 +91,9 @@ sealed interface HostsGeneratorEvent {
     data class OnSelectResult(val index: Int) : HostsGeneratorEvent
     object OnSelectAllPresets : HostsGeneratorEvent
     object OnClearPresets : HostsGeneratorEvent
+    data class OnDnsCheckDomainChanged(val domain: String) : HostsGeneratorEvent
+    object OnDnsCheck : HostsGeneratorEvent
+    object OnDnsCheckCancel : HostsGeneratorEvent
     object OnGenerate : HostsGeneratorEvent
     object OnCancelGeneration : HostsGeneratorEvent
     object OnTextCopied : HostsGeneratorEvent
@@ -96,6 +104,7 @@ sealed interface HostsGeneratorEvent {
 class HostsGeneratorViewModel(
     private val generator: HostsGenerator,
     private val groupDao: GroupDao,
+    private val dnsChecker: DnsChecker,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(HostsGeneratorState())
@@ -105,6 +114,7 @@ class HostsGeneratorViewModel(
     val effect = _effect.asSharedFlow()
 
     private var generationJob: Job? = null
+    private var dnsCheckJob: Job? = null
 
     init {
         observeDomainGroups()
@@ -155,6 +165,18 @@ class HostsGeneratorViewModel(
                 it.copy(selectedPresetIds = emptySet())
             }
 
+            is HostsGeneratorEvent.OnDnsCheckDomainChanged -> _state.update {
+                it.copy(dnsCheck = it.dnsCheck.copy(domain = event.domain))
+            }
+
+            HostsGeneratorEvent.OnDnsCheck -> runDnsCheck()
+            HostsGeneratorEvent.OnDnsCheckCancel -> {
+                dnsCheckJob?.cancel()
+                _state.update {
+                    it.copy(dnsCheck = it.dnsCheck.copy(isRunning = false, progressText = "Проверка остановлена"))
+                }
+            }
+
             HostsGeneratorEvent.OnGenerate -> generateHosts()
             HostsGeneratorEvent.OnCancelGeneration -> generationJob?.cancel()
             is HostsGeneratorEvent.OnTextCopied -> showToast("Текст скопирован")
@@ -166,6 +188,74 @@ class HostsGeneratorViewModel(
     fun showToast(text: String) {
         viewModelScope.launch {
             _effect.emit(UiEffect.ShowToast(text))
+        }
+    }
+
+    /**
+     * Проверяет все DNS-пресеты по одному домену: жив ли сервер и обслуживает ли выданный
+     * адрес этот домен. Результат сортируется: рабочие сверху, по времени ответа.
+     */
+    private fun runDnsCheck() {
+        val rawDomain = _state.value.dnsCheck.domain.trim()
+        val domain = rawDomain
+            .removePrefix("https://")
+            .removePrefix("http://")
+            .trimEnd('/')
+        if (domain.isBlank() || '.' !in domain) {
+            _state.update {
+                it.copy(dnsCheck = it.dnsCheck.copy(progressText = "Укажите домен, например gemini.google.com"))
+            }
+            return
+        }
+        val presets = _state.value.presets
+        dnsCheckJob?.cancel()
+        _state.update {
+            it.copy(
+                dnsCheck = it.dnsCheck.copy(
+                    domain = domain,
+                    isRunning = true,
+                    results = emptyList(),
+                    progressText = "Проверяю ${presets.size} DNS…",
+                ),
+            )
+        }
+        dnsCheckJob = viewModelScope.launch {
+            try {
+                val results = dnsChecker.check(presets = presets, domain = domain)
+                _state.update {
+                    it.copy(
+                        dnsCheck = it.dnsCheck.copy(
+                            isRunning = false,
+                            results = results,
+                            progressText = summarizeDnsCheck(results, domain),
+                        ),
+                    )
+                }
+            } catch (error: CancellationException) {
+                _state.update {
+                    it.copy(dnsCheck = it.dnsCheck.copy(isRunning = false, progressText = "Проверка остановлена"))
+                }
+                throw error
+            } catch (error: Exception) {
+                AppLogger.e("DNS check failed: domain=$domain", error)
+                _state.update {
+                    it.copy(
+                        dnsCheck = it.dnsCheck.copy(
+                            isRunning = false,
+                            progressText = "Ошибка проверки: ${error.message ?: error::class.simpleName}",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun summarizeDnsCheck(results: List<DnsCheckResult>, domain: String): String {
+        val works = results.count { it.status == DnsCheckStatus.Works }
+        return if (results.isEmpty()) {
+            "Нет DNS для проверки"
+        } else {
+            "Работает $works из ${results.size} · $domain"
         }
     }
 

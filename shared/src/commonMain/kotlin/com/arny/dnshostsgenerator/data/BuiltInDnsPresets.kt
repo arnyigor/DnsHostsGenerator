@@ -9,9 +9,11 @@ object BuiltInDnsPresets {
         DnsProviderPreset(
             id = "dns_bezmezhau_com",
             title = "dns.bezmezhau.com",
-            // Адрес сервера неизвестен — как и у astracat/geohide/malw, ходим по hostname:
-            // DoT (853) со строгой проверкой сертификата проверен живым запросом 12.10.2026.
-            primaryDns = "dns.bezmezhau.com",
+            // 23.10.2026: DoT по имени периодически не поднимается (TCP:853 timeout),
+            // а по IP 91.108.243.78 — отвечает и возвращает рабочий адрес (31.58.216.201).
+            // Поэтому ходим на IP, а сертификат проверяем по имени (dotHost).
+            primaryDns = "91.108.243.78",
+            dotHost = "dns.bezmezhau.com",
             outputFileName = "host_out_dns.bezmezhau.com.txt",
         ),
         DnsProviderPreset(
@@ -36,6 +38,23 @@ object BuiltInDnsPresets {
             // 193.233.112.x не открывались по TCP:443 ни для одного ИИ-домена.
             enabledByDefault = false,
             disabledReason = "отдаёт недостижимые адреса и не укладывается в таймаут (проверено 23.10.2026)",
+        ),
+        DnsProviderPreset(
+            id = "dns_eu_geohide_ru",
+            title = "eu.geohide.ru (EU)",
+            primaryDns = "eu.geohide.ru",
+            outputFileName = "host_out_eu.geohide.ru.txt",
+            // 23.10.2026: DoT 0.5–0.8 с, TLS-валидные адреса для chatgpt.com, claude.ai,
+            // gemini.google.com и open.spotify.com. Именно EU-ветка работает, в отличие от RU.
+        ),
+        DnsProviderPreset(
+            id = "dns_us_geohide_ru",
+            title = "us.geohide.ru (US)",
+            primaryDns = "us.geohide.ru",
+            outputFileName = "host_out_us.geohide.ru.txt",
+            // 23.10.2026: ответ ~7 с, адреса 192.255.159.x/192.3.233.253 не открывали TCP:443.
+            enabledByDefault = false,
+            disabledReason = "отвечает ~7 с и отдаёт недостижимые адреса (проверено 23.10.2026)",
         ),
         DnsProviderPreset(
             id = "dns_mafioznik_xyz",
@@ -77,6 +96,16 @@ object BuiltInDnsPresets {
             title = "dns.zapret.moe",
             primaryDns = "dns.zapret.moe",
             outputFileName = "host_out_dns.zapret.moe.txt",
+        ),
+        DnsProviderPreset(
+            id = "dns_wlrus_cfd",
+            title = "dns.wlrus.cfd",
+            primaryDns = "dns.wlrus.cfd",
+            // 23.10.2026: сертификат DoT не проходит строгую проверку, поэтому trust-all
+            // (как у mafioznik/shecan). Ответ ~100 мс, прокси 191.217.212.16 валиден
+            // по TLS для chatgpt.com, claude.ai, gemini.google.com и open.spotify.com.
+            allowInvalidTls = true,
+            outputFileName = "host_out_dns.wlrus.cfd.txt",
         ),
         DnsProviderPreset(
             id = "xbox_dns_ru",

@@ -95,7 +95,17 @@ class NextDnsClient(
             })
         }
 
-        val response = postJson("$API_BASE/accounts", payload.toString())
+        val response = try {
+            postJson("$API_BASE/accounts", payload.toString())
+        } catch (error: java.io.IOException) {
+            // Сети, где api.nextdns.io режется по SNI, отвечают reset/timeout на TLS-хендшейке.
+            // Сообщение должно подсказывать причину, а не показывать «timeout».
+            throw NextDnsApiException(
+                "Нет соединения с api.nextdns.io: сеть блокирует запрос " +
+                    "(TLS timeout/reset). Включите VPN и повторите. Детали: " +
+                    (error.message ?: error::class.simpleName),
+            )
+        }
         if (!response.isSuccessful) {
             val body = response.body?.string().orEmpty()
             throw NextDnsApiException(
