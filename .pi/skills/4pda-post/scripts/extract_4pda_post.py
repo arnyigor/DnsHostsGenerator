@@ -136,6 +136,13 @@ def parse_target(target: str) -> str:
     raise SystemExit("не найден pid: передайте число (143495976) или ссылку с p=...")
 
 
+def topic_page_url(topic_id: str, page_number: int) -> str:
+    """Страница темы по номеру: на 4PDA по 20 постов, номер задаётся st-смещением."""
+    if page_number < 1:
+        raise SystemExit("номер страницы начинается с 1")
+    return f"{BASE}?showtopic={topic_id}&st={(page_number - 1) * 20}"
+
+
 def main() -> int:
     # Консоль Windows по умолчанию cp1251: без этого падает на ✓/эмодзи в тексте поста.
     for stream in (sys.stdout, sys.stderr):
@@ -145,11 +152,43 @@ def main() -> int:
             pass
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("target", help="pid поста или ссылка на него")
+    ap.add_argument("target", nargs="?", help="pid поста или ссылка на него")
+    ap.add_argument("--topic", help="id темы (showtopic=1117490)")
+    ap.add_argument("--pages", help="страницы темы: 76 или 76-81")
+    ap.add_argument("--grep", help="regex по тексту поста: печатать только совпавшие посты")
     ap.add_argument("--all", action="store_true", help="вывести все посты страницы")
+    ap.add_argument("--full", action="store_true", help="в режиме --topic печатать полный текст")
     ap.add_argument("--links", action="store_true", help="показать ссылки поста")
     ap.add_argument("--json", action="store_true", help="вывод в JSON")
     args = ap.parse_args()
+
+    if args.topic:
+        if not args.pages:
+            raise SystemExit("нужны --pages (например --pages 76-81)")
+        first, _, last = args.pages.partition("-")
+        start, end = int(first), int(last or first)
+        pattern = re.compile(args.grep, re.IGNORECASE) if args.grep else None
+        for number in range(start, end + 1):
+            page = fetch(topic_page_url(args.topic, number))
+            posts = split_posts(page)
+            print(f"\n===== страница {number} ({len(posts)} постов) =====")
+            for pid in posts:
+                post = parse_post(pid, posts[pid])
+                text = post["text"]
+                if pattern and not pattern.search(text):
+                    continue
+                head = text.splitlines()[0] if text else ""
+                print(f"#{post['num']} pid={pid} {post['date']} {post['author']}: {head[:110]}")
+                if pattern or args.full:
+                    print(text)
+                    if args.links:
+                        for u in post["links"]:
+                            print(" -", u)
+                    print("-" * 60)
+        return 0
+
+    if not args.target:
+        raise SystemExit("передайте pid/ссылку либо --topic с --pages")
 
     url = parse_target(args.target)
     page = fetch(url)
