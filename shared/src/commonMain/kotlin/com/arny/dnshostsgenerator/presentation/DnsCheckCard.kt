@@ -1,6 +1,7 @@
 package com.arny.dnshostsgenerator.presentation
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
@@ -30,8 +33,12 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -67,6 +74,8 @@ fun DnsCheckCard(
     onCancelCheck: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Развёрнутость — не часть данных проверки: это локальное предпочтение экрана.
+    var expanded by rememberSaveable { mutableStateOf(true) }
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -74,25 +83,46 @@ fun DnsCheckCard(
         ),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = if (expanded) 16.dp else 10.dp),
+            verticalArrangement = Arrangement.spacedBy(if (expanded) 10.dp else 0.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Заголовок и есть переключатель: блок нужен не всегда, а место на телефоне дорого.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(vertical = if (expanded) 0.dp else 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Icon(
                     imageVector = Icons.Filled.Dns,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.width(10.dp))
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text("Проверка DNS", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Отвечает ли сервер и обслуживает ли его адрес домен (TLS)",
+                        if (expanded) {
+                            "Отвечает ли сервер и обслуживает ли его адрес домен (TLS)"
+                        } else {
+                            // Свёрнутый вид не теряет результат: короткая сводка остаётся видимой.
+                            collapsedSummary(state)
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "Свернуть проверку DNS" else "Развернуть проверку DNS",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
+
+            if (!expanded) return@Column
 
             // За VPN проверяется VPN, а не оператор: вердикт будет про туннель, а не про сеть.
             Row(
@@ -175,6 +205,14 @@ fun DnsCheckCard(
             }
         }
     }
+}
+
+/** Короткая сводка для свёрнутого вида: результат проверки не должен исчезать вместе с телом. */
+private fun collapsedSummary(state: DnsCheckUiState): String {
+    if (state.isRunning) return "идёт проверка · ${state.domain}"
+    if (state.results.isEmpty()) return "свёрнуто · ${state.domain}"
+    val works = state.results.count { it.status == DnsCheckStatus.Works }
+    return "работает $works из ${state.results.size} · ${state.domain}"
 }
 
 /** Сводка: сколько серверов работает, сколько обнуляет домен, сколько недоступно. */
