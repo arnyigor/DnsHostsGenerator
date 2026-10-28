@@ -1,5 +1,6 @@
 package com.arny.dnshostsgenerator.domain
 
+import com.arny.dnshostsgenerator.resolver.CertificateFacts
 import com.arny.dnshostsgenerator.resolver.DnsQueryOptions
 import com.arny.dnshostsgenerator.resolver.DnsResolver
 import com.arny.dnshostsgenerator.resolver.IpCheckResult
@@ -42,6 +43,8 @@ data class DnsCheckResult(
     val ip: String? = null,
     val allIps: List<String> = emptyList(),
     val detail: String? = null,
+    /** Сертификат адреса, подтвердившего домен: срок действия и эмитент (только при [DnsCheckStatus.Works]). */
+    val certificate: CertificateFacts? = null,
 )
 
 /**
@@ -114,6 +117,7 @@ class DnsChecker(
             ip: String? = null,
             allIps: List<String> = emptyList(),
             detail: String? = null,
+            certificate: CertificateFacts? = null,
         ) = DnsCheckResult(
             presetId = preset.id,
             title = preset.title,
@@ -123,6 +127,7 @@ class DnsChecker(
             ip = ip,
             allIps = allIps,
             detail = detail,
+            certificate = certificate,
         )
 
         val ips = try {
@@ -163,9 +168,14 @@ class DnsChecker(
         // Адреса, совпавшие с обычным DNS, проверяем последними.
         val candidates = ips.distinct().sortedBy { it in referenceIps }.take(MAX_CHECKED_IPS)
         for (ip in candidates) {
-            val check = ipValidator.check(domain, ip, tlsTimeoutMillis)
-            if (check == IpCheckResult.SERVES) {
-                return result(DnsCheckStatus.Works, ip = ip, allIps = ips)
+            val check = ipValidator.inspect(domain, ip, tlsTimeoutMillis)
+            if (check.result == IpCheckResult.SERVES) {
+                return result(
+                    DnsCheckStatus.Works,
+                    ip = ip,
+                    allIps = ips,
+                    certificate = check.certificate,
+                )
             }
         }
         return result(

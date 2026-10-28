@@ -30,11 +30,14 @@ class LiveDnsCheckerTest {
         println("== проверка DNS: gemini.google.com")
         results.forEach { r ->
             println(
-                "%-28s %-18s %5d мс  %s".format(
+                "%-28s %-18s %5d мс  %s  %s".format(
                     r.title.take(28),
                     r.status,
                     r.elapsedMs,
                     r.ip ?: r.allIps.firstOrNull().orEmpty(),
+                    r.certificate?.let {
+                        "cert до ${CertDates.formatDateUtc(it.notAfterEpochMillis)} (${it.issuer.take(40)})"
+                    }.orEmpty(),
                 ),
             )
         }

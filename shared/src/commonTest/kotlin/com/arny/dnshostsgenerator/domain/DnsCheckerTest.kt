@@ -1,7 +1,9 @@
 package com.arny.dnshostsgenerator.domain
 
+import com.arny.dnshostsgenerator.resolver.CertificateFacts
 import com.arny.dnshostsgenerator.resolver.DnsQueryOptions
 import com.arny.dnshostsgenerator.resolver.DnsResolver
+import com.arny.dnshostsgenerator.resolver.IpCheckOutcome
 import com.arny.dnshostsgenerator.resolver.IpCheckResult
 import com.arny.dnshostsgenerator.resolver.IpValidator
 import kotlinx.coroutines.runBlocking
@@ -70,6 +72,26 @@ class DnsCheckerTest {
         )
 
         assertEquals(DnsCheckStatus.SameAsProvider, results.single().status)
+    }
+
+    /** Данные сертификата поднимаются до UI: по ним показывается срок действия. */
+    @Test
+    fun check_keepsCertificateFactsOfWorkingServer() = runBlocking {
+        val certificate = CertificateFacts(
+            issuer = "CN=R11, O=Let's Encrypt, C=US",
+            notAfterEpochMillis = 1_800_000_000_000,
+        )
+        val checker = DnsChecker(
+            dnsResolver = FakeResolver(answers = mapOf("1.1.1.1" to listOf("10.0.0.1"))),
+            ipValidator = FakeValidator(serving = setOf("10.0.0.1"), certificate = certificate),
+        )
+
+        val works = checker.check(listOf(preset("ok", "OK DNS", "1.1.1.1")), "chatgpt.com").single()
+
+        assertEquals(DnsCheckStatus.Works, works.status)
+        assertEquals(certificate, works.certificate)
+        // 1_800_000_000_000 мс = 15.01.2027 UTC (сверено с Python datetime).
+        assertEquals("15.01.2027", CertDates.formatDateUtc(works.certificate!!.notAfterEpochMillis))
     }
 
     @Test
@@ -141,7 +163,13 @@ private class FakeResolver(
     }
 }
 
-private class FakeValidator(private val serving: Set<String>) : IpValidator {
+private class FakeValidator(
+    private val serving: Set<String>,
+    private val certificate: CertificateFacts? = null,
+) : IpValidator {
     override suspend fun check(domain: String, ip: String, timeoutMillis: Int): IpCheckResult =
         if (ip in serving) IpCheckResult.SERVES else IpCheckResult.REJECTED
+
+    override suspend fun inspect(domain: String, ip: String, timeoutMillis: Int): IpCheckOutcome =
+        IpCheckOutcome(check(domain, ip, timeoutMillis), if (ip in serving) certificate else null)
 }

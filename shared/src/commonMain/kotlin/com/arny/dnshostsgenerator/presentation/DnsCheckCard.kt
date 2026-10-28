@@ -1,6 +1,8 @@
 package com.arny.dnshostsgenerator.presentation
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,15 +11,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -25,15 +30,22 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.arny.dnshostsgenerator.domain.CertDates
 import com.arny.dnshostsgenerator.domain.DnsCheckResult
 import com.arny.dnshostsgenerator.domain.DnsCheckStatus
+import com.arny.dnshostsgenerator.platform.nowEpochMillis
+import kotlinx.coroutines.launch
 
 /** Состояние блока проверки DNS (не путать с проверкой доменов при генерации hosts). */
 data class DnsCheckUiState(
@@ -82,6 +94,31 @@ fun DnsCheckCard(
                 }
             }
 
+            // За VPN проверяется VPN, а не оператор: вердикт будет про туннель, а не про сеть.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(8.dp),
+                    )
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Проверяйте без VPN: через туннель измеряется VPN, а не ваш провайдер.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+
             OutlinedTextField(
                 value = state.domain,
                 onValueChange = onDomainChanged,
@@ -113,6 +150,8 @@ fun DnsCheckCard(
                     state.progressText,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
 
@@ -121,12 +160,13 @@ fun DnsCheckCard(
             }
 
             if (state.results.isNotEmpty()) {
+                DnsCheckSummary(state.results)
                 Surface(
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
                     shape = MaterialTheme.shapes.small,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Column(modifier = Modifier.padding(8.dp)) {
+                    Column(modifier = Modifier.padding(vertical = 4.dp, horizontal = 8.dp)) {
                         state.results.forEach { result ->
                             DnsCheckRow(result)
                         }
@@ -137,39 +177,78 @@ fun DnsCheckCard(
     }
 }
 
+/** Сводка: сколько серверов работает, сколько обнуляет домен, сколько недоступно. */
+@Composable
+private fun DnsCheckSummary(results: List<DnsCheckResult>) {
+    val works = results.count { it.status == DnsCheckStatus.Works }
+    val unreachable = results.count { it.status == DnsCheckStatus.Unreachable }
+    val other = results.size - works - unreachable
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        StatusChip("работает $works", StatusColor.Works)
+        if (other > 0) StatusChip("проблемы $other", StatusColor.Warn)
+        if (unreachable > 0) StatusChip("не отвечает $unreachable", StatusColor.Muted)
+    }
+}
+
+@Composable
+private fun StatusChip(text: String, color: Color) {
+    Surface(color = color.copy(alpha = 0.15f), shape = RoundedCornerShape(12.dp)) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        )
+    }
+}
+
 @Composable
 private fun DnsCheckRow(result: DnsCheckResult) {
-    val color = when (result.status) {
-        DnsCheckStatus.Works -> Color(0xFF2E7D32)
-        DnsCheckStatus.Blocked -> Color(0xFFC62828)
-        DnsCheckStatus.SameAsProvider -> Color(0xFFF9A825)
-        DnsCheckStatus.TlsFailed -> Color(0xFFEF6C00)
-        DnsCheckStatus.Unreachable -> MaterialTheme.colorScheme.outline
-    }
+    val clipboardManager = LocalClipboardManager.current
+    val snackbarHostState = LocalSnackbarHostState.current
+    val scope = rememberCoroutineScope()
+    val color = statusColor(result.status)
+    // Срок действия сертификата считаем один раз на отрисовку списка, а не для каждой строки.
+    val now = remember(result) { nowEpochMillis() }
+    val certLine = certificateLine(result.certificate, now)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Surface(color = color, shape = CircleShape, modifier = Modifier.size(8.dp)) {}
         Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = result.title,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = result.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = statusLabel(result.status),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = color,
+                )
+            }
             Text(
                 text = buildString {
-                    append(statusLabel(result.status))
-                    result.ip?.let { append(" · $it") }
-                    if (result.status != DnsCheckStatus.Works) {
-                        result.allIps.firstOrNull()?.let { if (it != result.ip) append(" · $it") }
+                    result.ip?.let { append(it) }
+                    if (result.ip == null) {
+                        result.allIps.firstOrNull()?.let { append(it) }
                     }
-                    if (result.detail != null && result.status != DnsCheckStatus.Works) {
-                        append(" · ${result.detail}")
+                    if (result.status != DnsCheckStatus.Works) {
+                        result.allIps.drop(1).firstOrNull()?.let { append(" · $it") }
+                        if (result.detail != null) append(" · ${result.detail}")
                     }
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -177,6 +256,15 @@ private fun DnsCheckRow(result: DnsCheckResult) {
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (certLine != null) {
+                Text(
+                    text = certLine.text,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (certLine.tone == StatusColor.Warn) StatusColor.Warn else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         Spacer(Modifier.width(8.dp))
         Text(
@@ -185,16 +273,72 @@ private fun DnsCheckRow(result: DnsCheckResult) {
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
         )
-        if (result.status != DnsCheckStatus.Works) {
-            Spacer(Modifier.width(6.dp))
-            Icon(
-                imageVector = Icons.Filled.Error,
-                contentDescription = null,
-                tint = color,
-                modifier = Modifier.size(14.dp),
-            )
+        val ip = result.ip
+        if (ip != null) {
+            IconButton(
+                onClick = {
+                    clipboardManager.setText(AnnotatedString(ip))
+                    scope.launch { snackbarHostState?.showSnackbar("IP скопирован: $ip") }
+                },
+                modifier = Modifier.size(32.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.ContentCopy,
+                    contentDescription = "Скопировать IP",
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else {
+            Box(Modifier.size(32.dp))
         }
     }
+}
+
+private data class CertLine(val text: String, val tone: Color)
+
+/**
+ * Строка про сертификат: эмитент и дата окончания. Просроченный или истекающий сертификат
+ * подсвечивается — он объясняет, почему рабочий сегодня адрес завтра перестанет работать.
+ */
+private fun certificateLine(
+    certificate: com.arny.dnshostsgenerator.resolver.CertificateFacts?,
+    nowEpochMillis: Long,
+): CertLine? {
+    certificate ?: return null
+    val days = CertDates.daysLeft(certificate.notAfterEpochMillis, nowEpochMillis)
+    val date = CertDates.formatDateUtc(certificate.notAfterEpochMillis)
+    val issuer = shortenIssuer(certificate.issuer)
+    val text = when {
+        days < 0 -> "сертификат истёк $date · $issuer"
+        days <= CERT_WARNING_DAYS -> "сертификат до $date · осталось $days дн. · $issuer"
+        else -> "сертификат до $date · $issuer"
+    }
+    return CertLine(text = text, tone = if (days <= CERT_WARNING_DAYS) StatusColor.Warn else StatusColor.Works)
+}
+
+/** `CN=R11, O=Let's Encrypt, C=US` → `Let's Encrypt`; если организации нет, оставляем CN. */
+private fun shortenIssuer(dn: String): String {
+    val parts = dn.split(',').map { it.trim() }
+    val organization = parts.firstOrNull { it.startsWith("O=", ignoreCase = true) }
+    if (organization != null) return organization.removePrefix("O=").removePrefix("o=").trim()
+    val commonName = parts.firstOrNull { it.startsWith("CN=", ignoreCase = true) }
+    return commonName?.substringAfter('=')?.trim() ?: dn.take(32)
+}
+
+private object StatusColor {
+    val Works = Color(0xFF2E7D32)
+    val Warn = Color(0xFFEF6C00)
+    val Blocked = Color(0xFFC62828)
+    val Muted = Color(0xFF757575)
+}
+
+private fun statusColor(status: DnsCheckStatus): Color = when (status) {
+    DnsCheckStatus.Works -> StatusColor.Works
+    DnsCheckStatus.Blocked -> StatusColor.Blocked
+    DnsCheckStatus.SameAsProvider -> Color(0xFFF9A825)
+    DnsCheckStatus.TlsFailed -> StatusColor.Warn
+    DnsCheckStatus.Unreachable -> StatusColor.Muted
 }
 
 private fun statusLabel(status: DnsCheckStatus): String = when (status) {
@@ -204,3 +348,6 @@ private fun statusLabel(status: DnsCheckStatus): String = when (status) {
     DnsCheckStatus.TlsFailed -> "адрес не обслуживает домен"
     DnsCheckStatus.Unreachable -> "не отвечает"
 }
+
+/** За сколько дней до истечения сертификат считается проблемным. */
+private const val CERT_WARNING_DAYS = 14L
