@@ -8,8 +8,6 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
-import com.arny.dnshostsgenerator.resolver.DnsQueryOptions
-import com.arny.dnshostsgenerator.resolver.createDnsResolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -30,7 +28,6 @@ class DnsVpnService : VpnService() {
     private var tun: ParcelFileDescriptor? = null
     private var reader: Thread? = null
     private val workers = Executors.newFixedThreadPool(WORKERS)
-    private val upstream = createDnsResolver()
     private val answered = AtomicInteger()
     private val forwarded = AtomicInteger()
 
@@ -53,6 +50,7 @@ class DnsVpnService : VpnService() {
         val rules = DnsRules.parse(rulesText)
         Log.i(TAG, "Старт: подмен ${rules.mappings.size}, блокировок ${rules.blocked.size}")
         startForeground(NOTIFICATION_ID, buildNotification(rules))
+        UpstreamDot.logger = { message -> Log.w(TAG, message) }
 
         val builder = Builder()
             .setSession("DNS-подмены")
@@ -131,29 +129,33 @@ class DnsVpnService : VpnService() {
             }
             DnsDecision.Forward -> Unit
         }
-        val query = runCatching { org.xbill.DNS.Message(payload) }.getOrNull() ?: return null
-        val question = query.question ?: return null
-        val host = question.name.toString(true).trimEnd('.')
-        val ips = runCatching {
-            runBlocking {
-                upstream.resolveA(
-                    domain = host,
-                    dnsServer = UPSTREAM_IPV4,
-                    timeoutMillis = UPSTREAM_TIMEOUT_MS,
-                    options = DnsQueryOptions(dotHost = UPSTREAM_DOT_HOST, allowPlainFallback = false),
-                )
-            }
-        }.getOrElse { emptyList() }
+        // Всё остальное пересылаем в DoT как есть: так сохраняются любые типы записей
+        // (AAAA, HTTPS, MX, TXT) и приложения не ломаются.
         forwarded.incrementAndGet()
         logCounters()
-        // Отвечаем всегда: если апстрим не дал адресов, отдаём пустой ответ, иначе
-        // приложение-клиент будет ждать и решит, что сети нет.
-        return DnsAnswerer.buildForwardedResponse(query, ips)
-            ?: DnsAnswerer.buildEmptyResponse(query)
+        val response = runCatching { UpstreamDot.forward(payload) }.getOrNull()
+        runCatching {
+            val question = org.xbill.DNS.Message(payload).question
+            Log.i(
+                TAG,
+                "FORWARD ${question?.name} type=${question?.type} " +
+                    if (response == null) "-> апстрим не ответил" else "-> ${response.size} байт",
+            )
+        }
+        if (response == null || response.isEmpty()) {
+            val query = runCatching { org.xbill.DNS.Message(payload) }.getOrNull()
+            Log.w(TAG, "Апстрим не ответил: ${query?.question?.name}")
+            return query?.let { DnsAnswerer.buildEmptyResponse(it) }
+        }
+        return response
     }
 
+    /**
+     * Самопроверка подмен без участия пользователя: служба и приложение исключены из VPN,
+     * поэтому резолвим из процесса, который в VPN не входит, — проверяем именно ответы службы
+     * по журналу «ANSWER». Здесь же проверяем, что выданные адреса совпадают с правилами.
+     */
     private fun selfTest(hosts: List<String>) {
-        // Небольшая пауза: первый пакет, пришедший сразу после establish(), TUN может отбросить.
         Thread.sleep(2_500)
         hosts.take(SELFTEST_HOSTS).forEach { host ->
             val result = runCatching {
