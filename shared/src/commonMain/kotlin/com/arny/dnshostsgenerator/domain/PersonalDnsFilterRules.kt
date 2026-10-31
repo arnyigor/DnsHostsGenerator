@@ -22,3 +22,13 @@ fun buildPersonalDnsFilterRules(profile: AppProfile, ip: String): String = build
     appendLine()
     profile.hosts.forEach { host -> appendLine(host) }
 }
+
+/** Правила из карты «домен → адрес»: у каждого домена может быть свой прокси. */
+fun buildPersonalDnsFilterRules(entries: Map<String, String>, title: String): String = buildString {
+    appendLine("# $title: подмена адресов (DnsHostsGenerator)")
+    appendLine("# Вставьте в additionalHosts.txt personalDNSfilter или в поле правил DNS-VPN.")
+    appendLine("# Строки без '>' блокируют остальные ответы, включая поддомены — они обязательны.")
+    entries.forEach { (host, ip) -> appendLine(">$host $ip") }
+    appendLine()
+    entries.keys.forEach { host -> appendLine(host) }
+}

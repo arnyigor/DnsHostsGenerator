@@ -18,6 +18,7 @@ import com.arny.dnshostsgenerator.data.BuiltInDnsPresets
 import com.arny.dnshostsgenerator.domain.BuiltInAppProfiles
 import com.arny.dnshostsgenerator.domain.ProfileChecker
 import com.arny.dnshostsgenerator.domain.buildPersonalDnsFilterRules
+import com.arny.dnshostsgenerator.domain.resolvePerHost
 import com.arny.dnshostsgenerator.resolver.createDnsResolver
 import com.arny.dnshostsgenerator.resolver.createHttpProber
 import com.arny.dnshostsgenerator.resolver.createIpValidator
@@ -122,6 +123,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        ensureBatteryExemption()
         refreshHandler.removeCallbacks(refreshTask)
         refreshHandler.post(refreshTask)
         val auto = prefs.getBoolean(KEY_AUTO, false)
@@ -155,6 +157,23 @@ class MainActivity : Activity() {
         stopButton.isEnabled = running
         updateStatus.text = prefs.getString(KEY_LAST_UPDATE, "Автоподбор ещё не запускался")
             .orEmpty()
+    }
+
+    /**
+     * Просит исключить приложение из оптимизации батареи: без этого OxygenOS убивает службу
+     * (в логах «Stopping service due to app idle» и «[BgDetect] kill … level 3»).
+     */
+    private fun ensureBatteryExemption() {
+        val power = getSystemService(android.os.PowerManager::class.java)
+        if (power?.isIgnoringBatteryOptimizations(packageName) == true) return
+        runCatching {
+            startActivity(
+                Intent(
+                    android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    android.net.Uri.parse("package:$packageName"),
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }.onFailure { updateStatus.text = "Разрешите работу в фоне: Настройки → Батарея" }
     }
 
     private fun renderAutoButton(enabled: Boolean) {
@@ -215,34 +234,37 @@ class MainActivity : Activity() {
         var lastFailure: String? = null
         for (preset in presets) {
             updateStatus.text = "$reason: проверяю ${profile.hosts.size} доменов через ${preset.title}…"
-            val result = withContext(Dispatchers.IO) { checker.check(profile, preset) }
-            val newIp = result.ip
+            // Адрес подбирается для каждого домена отдельно: один прокси часто не обслуживает
+            // часть доменов (вход через auth.openai.com), и «общий» адрес не находится.
+            val result = withContext(Dispatchers.IO) { checker.resolvePerHost(profile, preset) }
             android.util.Log.i(
                 "DnsVpn",
-                "AUTO ${preset.title}: ip=$newIp за ${result.elapsedMs} мс, кандидаты=${result.candidatesTried}",
+                "AUTO ${preset.title}: подобрано ${result.entries.size}/${profile.hosts.size} " +
+                    "за ${result.elapsedMs} мс, не вышло: ${result.failed}",
             )
-            if (newIp == null) {
-                lastFailure = "${preset.title}: ${result.detail.orEmpty().take(80)}"
+            if (!result.isUsable) {
+                lastFailure = "${preset.title}: не подобрано ни одного адреса"
                 continue
             }
+            val newRules = buildPersonalDnsFilterRules(result.entries, profile.title)
             val currentIp = DnsRules.parse(rulesInput.text.toString()).singleIp()
-            val stamp = android.text.format.DateFormat.format("HH:mm", System.currentTimeMillis())
-            if (currentIp == newIp) {
-                val message = "$reason $stamp: адрес $newIp без изменений (${preset.title})"
+            val newIps = result.entries.values.toSet().singleOrNull()
+            if (newRules == rulesInput.text.toString()) {
+                val message = "$reason: правила без изменений (адресов ${result.entries.size})"
                 prefs.edit().putString(KEY_LAST_UPDATE, message).apply()
                 updateStatus.text = message
                 return null
             }
-            val newRules = buildRulesText(profile.hosts, newIp)
             rulesInput.setText(newRules)
             prefs.edit().putString(KEY_RULES, newRules).apply()
-            val message = "$reason $stamp: ${currentIp ?: "—"} → $newIp (${preset.title})"
+            val stamp = android.text.format.DateFormat.format("HH:mm", System.currentTimeMillis())
+            val message = "$reason $stamp: адресов ${result.entries.size}, неудачных ${result.failed.size}"
             prefs.edit().putString(KEY_LAST_UPDATE, message).apply()
             updateStatus.text = message
-            android.util.Log.i("DnsVpn", "AUTO: адрес изменён ${currentIp ?: "—"} → $newIp")
-            notifyAddressChanged(currentIp, newIp)
+            android.util.Log.i("DnsVpn", "AUTO: правила обновлены ($message), было=$currentIp стало=$newIps")
+            notifyAddressChanged(currentIp, newIps ?: "несколько адресов")
             if (DnsVpnService.running) restartServiceWith(newRules)
-            return newIp
+            return newIps
         }
         val message = "$reason: рабочий адрес не найден (${lastFailure ?: "нет пресетов"})"
         prefs.edit().putString(KEY_LAST_UPDATE, message).apply()
@@ -381,14 +403,20 @@ class MainActivity : Activity() {
         const val EXTRA_AUTO = "auto"
 
         val DEFAULT_RULES = """
-            # Домены приложения ChatGPT
-            >chatgpt.com 45.13.237.213
-            >ws.chatgpt.com 45.13.237.213
-            >ab.chatgpt.com 45.13.237.213
-            >codex-cloud-backend.chatgpt.com 45.13.237.213
-            >android.chat.openai.com 45.13.237.213
-            >aw.api.openai.com 45.13.237.213
-            >cdn.platform.openai.com 45.13.237.213
+            # Домены ChatGPT и вход (проверено с телефона 31.10.2026)
+            >chatgpt.com 37.221.93.128
+            >ws.chatgpt.com 37.221.93.128
+            >ab.chatgpt.com 37.221.93.128
+            >codex-cloud-backend.chatgpt.com 37.221.93.128
+            >android.chat.openai.com 37.221.93.128
+            >aw.api.openai.com 37.221.93.128
+            >cdn.platform.openai.com 37.221.93.128
+            >auth.openai.com 37.221.93.128
+            >auth0.openai.com 37.221.93.128
+            >chat.openai.com 37.221.93.128
+            >api.openai.com 37.221.93.128
+            >cdn.oaistatic.com 37.221.93.128
+            >files.oaiusercontent.com 37.221.93.128
         """.trimIndent()
     }
 }

@@ -66,9 +66,9 @@ data class ProfileCheckResult(
  * Cloudflare — `unsupported_country_region_territory`. Без этого различия подбор врёт.
  */
 class ProfileChecker(
-    private val dnsResolver: DnsResolver,
-    private val ipValidator: IpValidator,
-    private val httpProber: HttpProber,
+    internal val dnsResolver: DnsResolver,
+    internal val ipValidator: IpValidator,
+    internal val httpProber: HttpProber,
     private val maxCandidateIps: Int = 3,
 ) {
 
@@ -194,3 +194,71 @@ class ProfileChecker(
         val NULL_ROUTES = setOf("0.0.0.0", "::")
     }
 }
+
+/** Итог подбора адреса для каждого домена отдельно. */
+data class PerHostRules(
+    val profileId: String,
+    val profileTitle: String,
+    val entries: Map<String, String>,
+    val failed: List<String>,
+    val elapsedMs: Long,
+) {
+    val isUsable: Boolean get() = entries.isNotEmpty()
+}
+
+/**
+ * Подбирает адрес **для каждого домена отдельно**.
+ *
+ * Требовать один общий адрес нельзя: часть доменов конкретный прокси не обслуживает
+ * (`cdn.auth0.com` обрывает TLS), и тогда «общий» подбор возвращает пусто, хотя остальные
+ * домены работают. Проверено 31.10.2026 на телефоне: из-за этого не работал вход.
+ */
+suspend fun ProfileChecker.resolvePerHost(
+    profile: AppProfile,
+    preset: DnsProviderPreset,
+    timeoutMillis: Int = 5_000,
+    tlsTimeoutMillis: Int = 6_000,
+): PerHostRules {
+    val startedAt = TimeSource.Monotonic.markNow()
+    val entries = LinkedHashMap<String, String>()
+    val failed = mutableListOf<String>()
+    for (host in profile.hosts) {
+        val ip = runCatching {
+            dnsResolver.resolveA(
+                domain = host,
+                dnsServer = preset.primaryDns,
+                timeoutMillis = timeoutMillis,
+                options = DnsQueryOptions(
+                    dotHost = preset.dotHost,
+                    allowInvalidTls = preset.allowInvalidTls,
+                    allowPlainFallback = false,
+                ),
+            )
+        }.getOrDefault(emptyList())
+            .filterNot { it in NULL_ROUTES }
+            .distinct()
+            .take(MAX_CANDIDATES)
+
+        var chosen: String? = null
+        for (candidate in ip) {
+            val tls = runCatching { ipValidator.check(host, candidate, tlsTimeoutMillis) }
+                .getOrDefault(IpCheckResult.REJECTED)
+            if (tls != IpCheckResult.SERVES) continue
+            val probe = runCatching { httpProber.probe(host, candidate) }.getOrNull()
+            if (probe != null && probe.verdict == HttpVerdict.REGION_BLOCKED) continue
+            chosen = candidate
+            break
+        }
+        if (chosen == null) failed += host else entries[host] = chosen
+    }
+    return PerHostRules(
+        profileId = profile.id,
+        profileTitle = profile.title,
+        entries = entries,
+        failed = failed,
+        elapsedMs = startedAt.elapsedNow().inWholeMilliseconds,
+    )
+}
+
+private val NULL_ROUTES = setOf("0.0.0.0", "::")
+private const val MAX_CANDIDATES = 4

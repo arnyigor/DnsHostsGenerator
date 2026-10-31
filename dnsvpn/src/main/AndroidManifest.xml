@@ -6,6 +6,9 @@
     <!-- Android 14+: тип foregroundServiceType="systemExempted" требует этого разрешения -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- OxygenOS/Doze останавливают службу («Stopping service due to app idle»), без
+         исключения из оптимизации батареи VPN живёт минуты. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:label="DNS VPN"

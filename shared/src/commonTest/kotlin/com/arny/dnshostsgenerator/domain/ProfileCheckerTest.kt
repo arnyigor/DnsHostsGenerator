@@ -117,6 +117,38 @@ class ProfileCheckerTest {
         assertEquals("45.13.237.213", result.ip)
     }
 
+    /**
+     * Вход через auth.openai.com не должен ломать весь набор: домен, который прокси
+     * не обслуживает, просто выпадает, остальные получают адрес.
+     */
+    @Test
+    fun resolvePerHost_picksIpPerDomain() = runBlocking {
+        val profile = AppProfile(
+            id = "p",
+            title = "Профиль",
+            hosts = listOf("chatgpt.com", "auth.openai.com", "cdn.auth0.com"),
+        )
+        val resolver = ProfileFakeResolver(
+            mapOf(
+                "chatgpt.com" to listOf("1.1.1.1"),
+                "auth.openai.com" to listOf("2.2.2.2"),
+                "cdn.auth0.com" to listOf("3.3.3.3"),
+            ),
+        )
+        val validator = ProfileFakeValidator(serving = setOf("chatgpt.com", "auth.openai.com"))
+        val prober = ProfileFakeProber(
+            verdicts = mapOf(
+                "chatgpt.com|1.1.1.1" to HttpVerdict.OK,
+                "auth.openai.com|2.2.2.2" to HttpVerdict.OK,
+            ),
+        )
+
+        val rules = ProfileChecker(resolver, validator, prober).resolvePerHost(profile, preset)
+
+        assertEquals(mapOf("chatgpt.com" to "1.1.1.1", "auth.openai.com" to "2.2.2.2"), rules.entries)
+        assertEquals(listOf("cdn.auth0.com"), rules.failed, "недоступный домен попадает в список отказов")
+    }
+
     @Test
     fun rules_haveMappingAndBlockingLineForEveryHost() {
         val rules = buildPersonalDnsFilterRules(profile, "9.9.9.9")
