@@ -74,6 +74,13 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }
+
+        jvmTest.dependencies {
+            // Compose UI-тесты для desktop: проверяют вёрстку без экрана и без устройства.
+            implementation(compose.desktop.uiTestJUnit4)
+            // Нативные библиотеки Skiko для текущей ОС: без них UI-тесты не стартуют.
+            implementation(compose.desktop.currentOs)
+        }
     }
 }
 
