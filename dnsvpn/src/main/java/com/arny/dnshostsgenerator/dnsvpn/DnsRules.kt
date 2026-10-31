@@ -25,6 +25,15 @@ data class DnsRules(
     /** Адрес, который используется во всех подменах; null, если адреса разные или их нет. */
     fun singleIp(): String? = mappings.values.toSet().singleOrNull()
 
+    /** Failed/unresolved hosts retain their previous mappings and block rules. */
+    fun withMappings(updates: Map<String, String>): DnsRules =
+        copy(mappings = mappings + updates)
+
+    fun toRulesText(): String = buildString {
+        mappings.forEach { (host, ip) -> appendLine(">$host $ip") }
+        blocked.forEach { appendLine(it) }
+    }
+
     companion object {
         private val IPV4 = Regex("""^\d{1,3}(\.\d{1,3}){3}$""")
 

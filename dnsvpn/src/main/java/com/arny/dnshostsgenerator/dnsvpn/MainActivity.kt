@@ -1,44 +1,20 @@
 package com.arny.dnshostsgenerator.dnsvpn
 
 import android.app.Activity
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
-import android.os.Build
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.arny.dnshostsgenerator.data.BuiltInDnsPresets
-import com.arny.dnshostsgenerator.domain.BuiltInAppProfiles
-import com.arny.dnshostsgenerator.domain.ProfileChecker
-import com.arny.dnshostsgenerator.domain.buildPersonalDnsFilterRules
-import com.arny.dnshostsgenerator.domain.resolvePerHost
-import com.arny.dnshostsgenerator.domain.verifyRules
-import com.arny.dnshostsgenerator.resolver.createDnsResolver
-import com.arny.dnshostsgenerator.resolver.createHttpProber
-import com.arny.dnshostsgenerator.resolver.createIpValidator
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * Экран правил: состояние службы, редактор правил и автоподбор адреса.
  *
- * Автоподбор использует [ProfileChecker] из основного проекта: он проверяет все домены
- * профиля и возвращает один адрес, годный для всех. Если адрес отличается от текущего,
- * правила обновляются, служба перезапускается, а пользователь получает уведомление.
+ * Автоподбор и применение правил принадлежат службе, а не жизненному циклу экрана.
  */
 class MainActivity : Activity() {
 
@@ -46,7 +22,6 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var updateStatus: TextView
     private lateinit var startButton: Button
-    private lateinit var stopButton: Button
     private lateinit var autoButton: Button
 
     private val refreshHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -57,14 +32,8 @@ class MainActivity : Activity() {
         }
     }
 
-    private var autoUpdateJob: Job? = null
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private val prefs by lazy { getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
-    private val checker by lazy {
-        ProfileChecker(createDnsResolver(), createIpValidator(), createHttpProber())
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val padding = (16 * resources.displayMetrics.density).toInt()
@@ -97,11 +66,7 @@ class MainActivity : Activity() {
         }
         startButton = Button(this).apply {
             text = "Включить DNS-VPN"
-            setOnClickListener { startVpn() }
-        }
-        stopButton = Button(this).apply {
-            text = "Выключить"
-            setOnClickListener { stopVpn() }
+            setOnClickListener { if (DnsVpnService.running) stopVpn() else startVpn() }
         }
         autoButton = Button(this).apply {
             text = "Автоподбор адреса: выключен"
@@ -110,14 +75,37 @@ class MainActivity : Activity() {
         // Порядок важен: состояние и кнопки сверху, редактор правил — ниже и в остатке экрана.
         layout.addView(status)
         layout.addView(startButton)
-        layout.addView(stopButton)
         layout.addView(autoButton)
         layout.addView(updateStatus)
-        layout.addView(TextView(this).apply { text = "Правила (>домен IP, домен = блок)" })
+        rulesInput.visibility = android.view.View.GONE
+        val applyButton = Button(this).apply {
+            text = "Применить правила"
+            visibility = android.view.View.GONE
+            setOnClickListener {
+                val rules = rulesInput.text.toString()
+                prefs.edit().putString(KEY_RULES, rules).apply()
+                if (DnsVpnService.running) startService(Intent(this@MainActivity, DnsVpnService::class.java).apply {
+                    action = DnsVpnService.ACTION_RULES
+                    putExtra(DnsVpnService.EXTRA_RULES, rules)
+                })
+                rulesInput.visibility = android.view.View.GONE
+                visibility = android.view.View.GONE
+            }
+        }
+        layout.addView(Button(this).apply {
+            text = "Правила · ${DnsRules.parse(rulesInput.text.toString()).mappings.size} доменов ▾"
+            setOnClickListener {
+                val expanded = rulesInput.visibility != android.view.View.VISIBLE
+                rulesInput.visibility = if (expanded) android.view.View.VISIBLE else android.view.View.GONE
+                applyButton.visibility = rulesInput.visibility
+                text = if (expanded) "Скрыть правила ▴" else "Показать правила ▾"
+                if (expanded) rulesInput.setText(prefs.getString(KEY_RULES, DEFAULT_RULES))
+            }
+        })
+        layout.addView(applyButton)
         layout.addView(rulesInput)
         setContentView(layout)
 
-        createNotificationChannel()
         renderState()
         runSelfTestIfRequested(intent)
         if (intent?.getBooleanExtra(EXTRA_AUTO, false) == true) {
@@ -137,7 +125,7 @@ class MainActivity : Activity() {
         refreshHandler.post(refreshTask)
         val auto = prefs.getBoolean(KEY_AUTO, false)
         renderAutoButton(auto)
-        if (auto && autoUpdateJob == null) startAutoUpdate()
+        if (auto) startAutoUpdate()
     }
 
     override fun onPause() {
@@ -162,8 +150,8 @@ class MainActivity : Activity() {
             "ВЫКЛЮЧЕНО"
         }
         status.setTextColor(if (running) 0xFF2E7D32.toInt() else 0xFFC62828.toInt())
-        startButton.isEnabled = !running
-        stopButton.isEnabled = running
+        startButton.text = if (running) "Выключить DNS-VPN" else "Включить DNS-VPN"
+        startButton.isEnabled = true
         updateStatus.text = prefs.getString(KEY_LAST_UPDATE, "Автоподбор ещё не запускался")
             .orEmpty()
     }
@@ -199,131 +187,19 @@ class MainActivity : Activity() {
     }
 
     private fun startAutoUpdate() {
-        if (autoUpdateJob != null) return
-        autoUpdateJob = scope.launch {
-            while (isActive) {
-                // Первый запуск — с паузой: сразу после старта процесса сеть приложения
-                // ещё не готова, и DNS отвечает UnknownHostException.
-                delay(FIRST_REFRESH_DELAY_MS)
-                refreshAddressWithRetry(reason = "автоподбор")
-                delay(AUTO_UPDATE_INTERVAL_MS)
-            }
-        }
+        if (DnsVpnService.running) startService(Intent(this, DnsVpnService::class.java).apply {
+            action = DnsVpnService.ACTION_AUTO
+        })
     }
 
-    private fun stopAutoUpdate() {
-        autoUpdateJob?.cancel()
-        autoUpdateJob = null
-    }
-
-    /**
-     * Подбирает адрес и, если он изменился, переписывает правила и перезапускает службу.
-     * Возвращает новый адрес или null, если ничего не поменялось.
-     */
-    /**
-     * Автоподбор с повтором: первый проход после холодного старта может не увидеть сеть.
-     */
-    private suspend fun refreshAddressWithRetry(reason: String): String? {
-        repeat(REFRESH_ATTEMPTS) { attempt ->
-            val ip = refreshAddress(reason = if (attempt == 0) reason else "$reason (повтор)")
-            if (ip != null) return ip
-            if (attempt < REFRESH_ATTEMPTS - 1) delay(RETRY_PAUSE_MS)
-        }
-        return null
-    }
-
-    private suspend fun refreshAddress(reason: String): String? {
-        val profile = BuiltInAppProfiles.chatGptAndroid
-        // Пробуем подряд несколько пресетов: конкретный DNS может отвалиться,
-        // а нам нужен хоть один адрес, годный для всех доменов профиля.
-        val presets = BuiltInDnsPresets.defaults
-            .filter { it.enabledByDefault }
-            .ifEmpty { BuiltInDnsPresets.defaults }
-            .take(MAX_PRESETS_PER_REFRESH)
-        // Сначала проверяем текущие правила: полный перебор занимает до минуты.
-        val currentEntries = currentRulesEntries()
-        if (currentEntries.isNotEmpty() &&
-            withContext(Dispatchers.IO) { checker.verifyRules(currentEntries) }
-        ) {
-            val message = "$reason: текущие адреса рабочие, обновление не нужно"
-            prefs.edit().putString(KEY_LAST_UPDATE, message).apply()
-            updateStatus.text = message
-            android.util.Log.i("DnsVpn", "AUTO: $message")
-            return null
-        }
-        var lastFailure: String? = null
-        for (preset in presets) {
-            updateStatus.text = "$reason: проверяю ${profile.hosts.size} доменов через ${preset.title}…"
-            // Адрес подбирается для каждого домена отдельно: один прокси часто не обслуживает
-            // часть доменов (вход через auth.openai.com), и «общий» адрес не находится.
-            val result = withContext(Dispatchers.IO) { checker.resolvePerHost(profile, preset) }
-            android.util.Log.i(
-                "DnsVpn",
-                "AUTO ${preset.title}: подобрано ${result.entries.size}/${profile.hosts.size} " +
-                    "за ${result.elapsedMs} мс, не вышло: ${result.failed}",
-            )
-            if (!result.isUsable) {
-                lastFailure = "${preset.title}: не подобрано ни одного адреса"
-                continue
-            }
-            val newRules = buildPersonalDnsFilterRules(result.entries, profile.title)
-            val currentIp = DnsRules.parse(rulesInput.text.toString()).singleIp()
-            val newIps = result.entries.values.toSet().singleOrNull()
-            if (newRules == rulesInput.text.toString()) {
-                val message = "$reason: правила без изменений (адресов ${result.entries.size})"
-                prefs.edit().putString(KEY_LAST_UPDATE, message).apply()
-                updateStatus.text = message
-                return null
-            }
-            rulesInput.setText(newRules)
-            prefs.edit().putString(KEY_RULES, newRules).apply()
-            val stamp = android.text.format.DateFormat.format("HH:mm", System.currentTimeMillis())
-            val message = "$reason $stamp: адресов ${result.entries.size}, неудачных ${result.failed.size}"
-            prefs.edit().putString(KEY_LAST_UPDATE, message).apply()
-            updateStatus.text = message
-            android.util.Log.i("DnsVpn", "AUTO: правила обновлены ($message), было=$currentIp стало=$newIps")
-            notifyAddressChanged(currentIp, newIps ?: "несколько адресов")
-            if (DnsVpnService.running) restartServiceWith(newRules)
-            return newIps
-        }
-        val message = "$reason: рабочий адрес не найден (${lastFailure ?: "нет пресетов"})"
-        prefs.edit().putString(KEY_LAST_UPDATE, message).apply()
-        updateStatus.text = message
-        android.util.Log.i("DnsVpn", "AUTO: $message")
-        return null
-    }
-
-    /** Текущие правила из поля ввода в виде карты «домен → адрес». */
-    private fun currentRulesEntries(): Map<String, String> =
-        DnsRules.parse(rulesInput.text.toString()).mappings
-
-    private fun buildRulesText(hosts: List<String>, ip: String): String = buildString {
-        hosts.forEach { appendLine(">$it $ip") }
-        appendLine()
-        hosts.forEach { appendLine(it) }
-    }
-
-    private fun notifyAddressChanged(oldIp: String?, newIp: String) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val manager = getSystemService(NotificationManager::class.java)
-            if (manager.getNotificationChannel(CHANNEL_UPDATES) == null) {
-                manager.createNotificationChannel(
-                    NotificationChannel(CHANNEL_UPDATES, "Смена адреса", NotificationManager.IMPORTANCE_DEFAULT),
-                )
-            }
-        }
-        val notification = Notification.Builder(this, CHANNEL_UPDATES)
-            .setContentTitle("Адрес подмены обновлён")
-            .setContentText("${oldIp ?: "—"} → $newIp")
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setAutoCancel(true)
-            .build()
-        getSystemService(NotificationManager::class.java).notify(UPDATE_NOTIFICATION_ID, notification)
-    }
+    private fun stopAutoUpdate() = startAutoUpdate()
 
     // --- служба ---
 
     private fun startVpn() {
+        if (rulesInput.visibility != android.view.View.VISIBLE) {
+            rulesInput.setText(prefs.getString(KEY_RULES, DEFAULT_RULES))
+        }
         prefs.edit().putString(KEY_RULES, rulesInput.text.toString()).apply()
         // Адрес прокси живёт часами, поэтому по умолчанию автоподбор включается вместе с VPN.
         // Если пользователь выключил его руками (ключ уже есть) — уважаем выбор.
@@ -358,19 +234,12 @@ class MainActivity : Activity() {
         startForegroundService(intent)
     }
 
-    private fun restartServiceWith(rules: String) {
-        startService(Intent(this, DnsVpnService::class.java).apply { action = DnsVpnService.ACTION_STOP })
-        android.os.Handler(mainLooper).postDelayed({ launchService(rules) }, 700)
-    }
-
     private fun stopVpn() {
         startService(Intent(this, DnsVpnService::class.java).apply { action = DnsVpnService.ACTION_STOP })
     }
 
     override fun onDestroy() {
         refreshHandler.removeCallbacks(refreshTask)
-        stopAutoUpdate()
-        scope.cancel()
         super.onDestroy()
     }
 
@@ -390,36 +259,14 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val manager = getSystemService(NotificationManager::class.java)
-            if (manager.getNotificationChannel(CHANNEL_UPDATES) == null) {
-                manager.createNotificationChannel(
-                    NotificationChannel(CHANNEL_UPDATES, "Смена адреса", NotificationManager.IMPORTANCE_DEFAULT),
-                )
-            }
-        }
-    }
-
     private companion object {
         const val REQUEST_VPN = 1001
         const val REFRESH_INTERVAL_MS = 1_000L
-
-        /** Период автоподбора: адреса прокси живут часами, чаще проверять смысла нет. */
-        const val AUTO_UPDATE_INTERVAL_MS = 15 * 60 * 1000L
-        const val FIRST_REFRESH_DELAY_MS = 3_000L
-        const val RETRY_PAUSE_MS = 2_000L
-        const val REFRESH_ATTEMPTS = 2
-
-        /** Сколько DNS-серверов перебрать за один автоподбор. */
-        const val MAX_PRESETS_PER_REFRESH = 4
 
         const val PREFS = "dnsvpn"
         const val KEY_RULES = "rules"
         const val KEY_AUTO = "auto"
         const val KEY_LAST_UPDATE = "lastUpdate"
-        const val CHANNEL_UPDATES = "dnsvpn_updates"
-        const val UPDATE_NOTIFICATION_ID = 43
 
         const val EXTRA_AUTORUN = "run"
         const val EXTRA_SELFTEST = "selftest"

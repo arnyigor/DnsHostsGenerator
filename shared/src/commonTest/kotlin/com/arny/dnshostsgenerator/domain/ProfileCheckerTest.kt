@@ -150,6 +150,41 @@ class ProfileCheckerTest {
     }
 
     @Test
+    fun perHost_rejectsHttpFailureAndReportsProgress() = runBlocking {
+        val checker = ProfileChecker(
+            ProfileFakeResolver(profile.hosts.associateWith { listOf("1.1.1.1") }),
+            ProfileFakeValidator(profile.hosts.toSet()),
+            ProfileFakeProber(emptyMap()),
+        )
+        val progress = mutableListOf<Int>()
+        val result = checker.resolvePerHost(profile, preset, onProgress = { done, total ->
+            assertEquals(profile.hosts.size, total)
+            progress += done
+        })
+        assertTrue(result.entries.isEmpty())
+        assertEquals(profile.hosts, result.failed)
+        assertEquals(listOf(1, 2, 3), progress)
+    }
+
+    @Test
+    fun perHost_doesNotSwallowCancellation() = runBlocking {
+        val resolver = object : DnsResolver {
+            override suspend fun resolveA(domain: String, dnsServer: String, timeoutMillis: Int): List<String> =
+                throw kotlinx.coroutines.CancellationException("cancelled")
+            override suspend fun resolveA(domain: String, dnsServer: String, timeoutMillis: Int, options: DnsQueryOptions): List<String> =
+                resolveA(domain, dnsServer, timeoutMillis)
+        }
+        var cancelled = false
+        try {
+            ProfileChecker(resolver, ProfileFakeValidator(emptySet()), ProfileFakeProber(emptyMap()))
+                .resolvePerHost(profile, preset)
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            cancelled = true
+        }
+        assertTrue(cancelled)
+    }
+
+    @Test
     fun rules_haveMappingAndBlockingLineForEveryHost() {
         val rules = buildPersonalDnsFilterRules(profile, "9.9.9.9")
 

@@ -8,6 +8,9 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -25,6 +28,9 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class DnsVpnService : VpnService() {
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val updater by lazy { RuleUpdater(this, scope, ::applyRules) }
+    @Volatile private var activeRules = DnsRules()
     private var tun: ParcelFileDescriptor? = null
     private var reader: Thread? = null
     private val workers = Executors.newFixedThreadPool(WORKERS)
@@ -32,12 +38,22 @@ class DnsVpnService : VpnService() {
     private val forwarded = AtomicInteger()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.i(TAG, "COMMAND action=${intent?.action ?: "sticky-restore"} startId=$startId running=$running")
         when (intent?.action) {
+            ACTION_AUTO -> {
+                if (tun == null) { stopSelf(); return START_NOT_STICKY }
+                updater.configure()
+            }
+            ACTION_RULES -> {
+                if (tun == null) { stopSelf(); return START_NOT_STICKY }
+                applyRules(intent.getStringExtra(EXTRA_RULES).orEmpty())
+            }
             ACTION_STOP -> {
                 stopVpn()
                 return START_NOT_STICKY
             }
-            else -> startVpn(intent?.getStringExtra(EXTRA_RULES).orEmpty())
+            else -> startVpn(intent?.getStringExtra(EXTRA_RULES)
+                ?: getSharedPreferences("dnsvpn", MODE_PRIVATE).getString("rules", "").orEmpty())
         }
         return START_STICKY
     }
@@ -48,6 +64,8 @@ class DnsVpnService : VpnService() {
             return
         }
         val rules = DnsRules.parse(rulesText)
+        activeRules = rules
+        getSharedPreferences("dnsvpn", MODE_PRIVATE).edit().putString("rules", rulesText).apply()
         Log.i(TAG, "Старт: подмен ${rules.mappings.size}, блокировок ${rules.blocked.size}")
         startForeground(NOTIFICATION_ID, buildNotification(rules))
         UpstreamDot.logger = { message -> Log.w(TAG, message) }
@@ -66,13 +84,9 @@ class DnsVpnService : VpnService() {
             runCatching { builder.addDisallowedApplication(pkg) }
                 .onFailure { Log.w(TAG, "Не удалось исключить $pkg: ${it.message}") }
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            runCatching {
-                builder.addAddress(VPN_IPV6, 128)
-                builder.addDnsServer(DNS_IPV6)
-                builder.addRoute(DNS_IPV6, 128)
-            }
-        }
+        // Only IPv4 UDP DNS is implemented. Do not advertise a nonfunctional IPv6 DNS route.
+        // Allow native IPv6 application traffic to bypass this IPv4-only DNS VPN.
+        builder.allowFamily(android.system.OsConstants.AF_INET6)
         val descriptor = builder.establish()
         if (descriptor == null) {
             Log.e(TAG, "Не удалось поднять TUN (нет разрешения VPN?)")
@@ -84,36 +98,62 @@ class DnsVpnService : VpnService() {
         ruleCount = rules.mappings.size
         answeredQueries = 0
         forwardedQueries = 0
-        reader = Thread({ readLoop(descriptor, rules) }, "dnsvpn-reader").also { it.start() }
-        // Самопроверка без участия пользователя: процесс службы уже в нашем VPN,
-        // поэтому штатный резолвер должен вернуть подменённые адреса.
-        Thread({ selfTest(rules.mappings.keys.toList()) }, "dnsvpn-selftest").start()
+        reader = Thread({ readLoop(descriptor) }, "dnsvpn-reader").also { it.start() }
+        updater.configure()
     }
 
-    private fun readLoop(descriptor: ParcelFileDescriptor, rules: DnsRules) {
+    private fun applyRules(text: String) {
+        val parsed = DnsRules.parse(text)
+        activeRules = parsed
+        ruleCount = parsed.mappings.size
+        getSharedPreferences("dnsvpn", MODE_PRIVATE).edit().putString("rules", text).apply()
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, buildNotification(parsed))
+        if (manager.getNotificationChannel("dnsvpn_updates") == null) {
+            manager.createNotificationChannel(NotificationChannel(
+                "dnsvpn_updates", "Смена адреса", NotificationManager.IMPORTANCE_DEFAULT,
+            ))
+        }
+        manager.notify(43, Notification.Builder(this, "dnsvpn_updates")
+            .setContentTitle("Правила DNS обновлены")
+            .setContentText("Доменов: $ruleCount · VPN не перезапускался")
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setAutoCancel(true)
+            .build())
+        Log.i(TAG, "RULES applied without TUN restart: mappings=$ruleCount blocks=${parsed.blocked.size}")
+    }
+
+    private fun readLoop(descriptor: ParcelFileDescriptor) {
         val input = FileInputStream(descriptor.fileDescriptor)
         val output = FileOutputStream(descriptor.fileDescriptor)
         val buffer = ByteArray(MAX_PACKET)
-        while (tun != null) {
-            val length = try {
-                input.read(buffer)
-            } catch (error: Exception) {
-                Log.w(TAG, "Чтение TUN прервано: ${error.message}")
-                break
+        try {
+            while (tun === descriptor) {
+                val length = input.read(buffer)
+                if (length < 0) break
+                if (length == 0) continue
+                val packet = Ipv4Udp.parse(buffer, length) ?: continue
+                if (packet.destinationPort != DNS_PORT) continue
+                workers.execute {
+                    val payload = handleQuery(packet.payload, activeRules)
+                    if (payload != null && payload.isNotEmpty() && tun === descriptor) {
+                        synchronized(output) {
+                            runCatching { output.write(Ipv4Udp.buildReply(packet, payload)) }
+                                .onFailure { Log.w(TAG, "TUN write failed: ${it.message}") }
+                        }
+                    }
+                }
             }
-            if (length <= 0) continue
-            val packet = Ipv4Udp.parse(buffer, length) ?: continue
-            if (packet.destinationPort != DNS_PORT) continue
-            workers.execute {
-                val payload = handleQuery(packet.payload, rules)
-                if (payload != null && payload.isNotEmpty()) {
-                    runCatching { output.write(Ipv4Udp.buildReply(packet, payload)) }
-                        .onFailure { Log.w(TAG, "Запись в TUN не удалась: ${it.message}") }
+        } catch (error: Exception) {
+            Log.w(TAG, "TUN reader exited: ${error.message}; active=${tun === descriptor}")
+        } finally {
+            if (tun === descriptor) android.os.Handler(mainLooper).post {
+                if (tun === descriptor) {
+                    Log.e(TAG, "Unexpected TUN reader exit; stopping unhealthy VPN")
+                    stopVpn()
                 }
             }
         }
-        // Потоки не закрываем здесь: их закроет stopVpn вместе с дескриптором,
-        // иначе рабочие потоки получают "Stream Closed" при записи ответа.
     }
 
     private fun handleQuery(payload: ByteArray, rules: DnsRules): ByteArray? {
@@ -152,21 +192,6 @@ class DnsVpnService : VpnService() {
         return response
     }
 
-    /**
-     * Самопроверка подмен без участия пользователя: служба и приложение исключены из VPN,
-     * поэтому резолвим из процесса, который в VPN не входит, — проверяем именно ответы службы
-     * по журналу «ANSWER». Здесь же проверяем, что выданные адреса совпадают с правилами.
-     */
-    private fun selfTest(hosts: List<String>) {
-        Thread.sleep(2_500)
-        hosts.take(SELFTEST_HOSTS).forEach { host ->
-            val result = runCatching {
-                java.net.InetAddress.getAllByName(host).joinToString()
-            }.getOrElse { "ошибка: ${it.message}" }
-            Log.i(TAG, "SELFTEST $host -> $result")
-        }
-    }
-
     private fun logCounters() {
         val answeredCount = answered.get()
         val forwardedCount = forwarded.get()
@@ -200,10 +225,13 @@ class DnsVpnService : VpnService() {
     }
 
     private fun stopVpn() {
+        Log.i(TAG, "STOP cleanup tun=${tun != null} running=$running")
         running = false
+        val descriptor = tun
+        tun = null
         reader?.interrupt()
         reader = null
-        runCatching { tun?.close() }
+        runCatching { descriptor?.close() }
         tun = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -217,6 +245,8 @@ class DnsVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        Log.i(TAG, "DESTROY service")
+        scope.cancel()
         stopVpn()
         workers.shutdownNow()
         super.onDestroy()
@@ -258,6 +288,8 @@ class DnsVpnService : VpnService() {
         private const val CHANNEL_ID = "dnsvpn"
         private const val NOTIFICATION_ID = 42
 
+        const val ACTION_RULES = "com.arny.dnshostsgenerator.dnsvpn.RULES"
+        const val ACTION_AUTO = "com.arny.dnshostsgenerator.dnsvpn.AUTO"
         const val ACTION_START = "com.arny.dnshostsgenerator.dnsvpn.START"
         const val ACTION_STOP = "com.arny.dnshostsgenerator.dnsvpn.STOP"
         const val EXTRA_RULES = "rules"

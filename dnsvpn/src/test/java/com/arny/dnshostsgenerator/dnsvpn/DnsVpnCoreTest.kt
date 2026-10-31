@@ -26,6 +26,27 @@ class DnsVpnCoreTest {
     )
 
     @Test
+    fun partialUpdate_preservesUnresolvedHostsAndBlocks() {
+        val updated = rules.withMappings(mapOf("chatgpt.com" to "1.2.3.4"))
+        assertEquals("1.2.3.4", updated.mappingFor("chatgpt.com"))
+        assertEquals("45.13.237.213", updated.mappingFor("ws.chatgpt.com"))
+        assertEquals(rules.blocked, updated.blocked)
+        assertEquals(updated, DnsRules.parse(updated.toRulesText()))
+        assertEquals(rules, rules.withMappings(emptyMap()))
+    }
+
+    @Test
+    fun replacingRules_changesAnswersWithoutRecreatingPacketPipeline() {
+        val query = dnsQuery("chatgpt.com", Type.A)
+        val before = DnsAnswerer.decide(query, rules) as DnsDecision.Reply
+        val after = DnsAnswerer.decide(query, rules.withMappings(mapOf("chatgpt.com" to "1.2.3.4"))) as DnsDecision.Reply
+        val oldIp = Message(before.payload).getSection(Section.ANSWER).filterIsInstance<ARecord>().single().address.hostAddress
+        val newIp = Message(after.payload).getSection(Section.ANSWER).filterIsInstance<ARecord>().single().address.hostAddress
+        assertEquals("45.13.237.213", oldIp)
+        assertEquals("1.2.3.4", newIp)
+    }
+
+    @Test
     fun rules_parseMappingsAndBlocks() {
         assertEquals("45.13.237.213", rules.mappingFor("chatgpt.com"))
         assertEquals("45.13.237.213", rules.mappingFor("WS.ChatGPT.com"))

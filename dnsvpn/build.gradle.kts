@@ -9,8 +9,8 @@ android {
 
     defaultConfig {
         applicationId = "com.arny.dnshostsgenerator.dnsvpn"
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         minSdk = libs.versions.android.minSdk.get().toInt()
     }

@@ -11,6 +11,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlin.time.TimeSource
 
 /** Проверка одного домена профиля на выбранном адресе. */
@@ -218,44 +220,50 @@ suspend fun ProfileChecker.resolvePerHost(
     preset: DnsProviderPreset,
     timeoutMillis: Int = 5_000,
     tlsTimeoutMillis: Int = 6_000,
-): PerHostRules {
+    onProgress: (Int, Int) -> Unit = { _, _ -> },
+): PerHostRules = coroutineScope {
     val startedAt = TimeSource.Monotonic.markNow()
-    val entries = LinkedHashMap<String, String>()
-    val failed = mutableListOf<String>()
-    for (host in profile.hosts) {
-        val ip = runCatching {
-            dnsResolver.resolveA(
-                domain = host,
-                dnsServer = preset.primaryDns,
-                timeoutMillis = timeoutMillis,
-                options = DnsQueryOptions(
-                    dotHost = preset.dotHost,
-                    allowInvalidTls = preset.allowInvalidTls,
-                    allowPlainFallback = false,
-                ),
-            )
-        }.getOrDefault(emptyList())
-            .filterNot { it in NULL_ROUTES }
-            .distinct()
-            .take(MAX_CANDIDATES)
-
-        var chosen: String? = null
-        for (candidate in ip) {
-            val tls = runCatching { ipValidator.check(host, candidate, tlsTimeoutMillis) }
-                .getOrDefault(IpCheckResult.REJECTED)
-            if (tls != IpCheckResult.SERVES) continue
-            val probe = runCatching { httpProber.probe(host, candidate) }.getOrNull()
-            if (probe != null && probe.verdict == HttpVerdict.REGION_BLOCKED) continue
-            chosen = candidate
-            break
+    val semaphore = Semaphore(3)
+    // awaitAll preserves input order; workers never mutate a shared map.
+    val results = profile.hosts.map { host ->
+        async {
+            semaphore.withPermit {
+                val ips = cancellableCheck {
+                    dnsResolver.resolveA(
+                        domain = host,
+                        dnsServer = preset.primaryDns,
+                        timeoutMillis = timeoutMillis,
+                        options = DnsQueryOptions(
+                            dotHost = preset.dotHost,
+                            allowInvalidTls = preset.allowInvalidTls,
+                            allowPlainFallback = false,
+                        ),
+                    )
+                }.getOrDefault(emptyList()).filterNot { it in NULL_ROUTES }.distinct().take(MAX_CANDIDATES)
+                var chosen: String? = null
+                for (candidate in ips) {
+                    val tls = cancellableCheck { ipValidator.check(host, candidate, tlsTimeoutMillis) }
+                        .getOrDefault(IpCheckResult.REJECTED)
+                    if (tls != IpCheckResult.SERVES) continue
+                    val probe = cancellableCheck { httpProber.probe(host, candidate) }.getOrNull()
+                    if (probe == null || probe.verdict == HttpVerdict.REGION_BLOCKED ||
+                        probe.verdict == HttpVerdict.FAILED) continue
+                    chosen = candidate
+                    break
+                }
+                host to chosen
+            }
         }
-        if (chosen == null) failed += host else entries[host] = chosen
     }
-    return PerHostRules(
+    // Progress callbacks run sequentially in the caller context, not on network workers.
+    val completed = results.mapIndexed { index, task ->
+        task.await().also { onProgress(index + 1, profile.hosts.size) }
+    }
+    PerHostRules(
         profileId = profile.id,
         profileTitle = profile.title,
-        entries = entries,
-        failed = failed,
+        entries = completed.mapNotNull { (host, ip) -> ip?.let { host to it } }.toMap(),
+        failed = completed.filter { it.second == null }.map { it.first },
         elapsedMs = startedAt.elapsedNow().inWholeMilliseconds,
     )
 }
@@ -276,10 +284,19 @@ suspend fun ProfileChecker.verifyRules(
     if (entries.isEmpty()) return false
     val sample = entries.entries.take(sampleSize)
     return sample.all { (host, ip) ->
-        val tls = runCatching { ipValidator.check(host, ip, 4_000) }
+        val tls = cancellableCheck { ipValidator.check(host, ip, 4_000) }
             .getOrDefault(IpCheckResult.REJECTED)
         if (tls != IpCheckResult.SERVES) return@all false
-        val probe = runCatching { httpProber.probe(host, ip) }.getOrNull() ?: return@all false
+        val probe = cancellableCheck { httpProber.probe(host, ip) }.getOrNull() ?: return@all false
         probe.verdict != HttpVerdict.REGION_BLOCKED && probe.verdict != HttpVerdict.FAILED
     }
+}
+
+/** Network failures are recoverable; coroutine cancellation is not a failed candidate. */
+private suspend inline fun <T> cancellableCheck(block: () -> T): Result<T> = try {
+    Result.success(block())
+} catch (error: CancellationException) {
+    throw error
+} catch (error: Exception) {
+    Result.failure(error)
 }
