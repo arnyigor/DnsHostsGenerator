@@ -247,6 +247,9 @@ class DnsVpnService : VpnService() {
             // Себя тоже исключаем: иначе запросы к DoT-серверу из самой службы уходят
             // в собственный VPN и разрешение имён зацикливается (проверено 31.10.2026).
             "com.arny.dnshostsgenerator.dnsvpn",
+            // adb (uid 2000) — через него работает TaskBridge и отладка по Wi-Fi:
+            // если его трафик уходит в наш VPN, локальная связь с ПК рвётся.
+            "com.android.shell",
         )
 
         private const val TAG = "DnsVpn"
