@@ -9,6 +9,7 @@ import com.arny.dnshostsgenerator.domain.HostLine
 import com.arny.dnshostsgenerator.logging.AppLogger
 import com.arny.dnshostsgenerator.resolver.DnsQueryOptions
 import com.arny.dnshostsgenerator.resolver.DnsResolver
+import com.arny.dnshostsgenerator.resolver.HttpProber
 import com.arny.dnshostsgenerator.resolver.IpCheckResult
 import com.arny.dnshostsgenerator.resolver.IpValidator
 import kotlinx.coroutines.CancellationException
@@ -28,6 +29,8 @@ class HostsGenerator(
      * null — проверка выключена (используется в юнит-тестах с фиктивным DNS).
      */
     private val ipValidator: IpValidator? = null,
+    /** Замер отклика по HTTP: TLS-хендшейк не показывает, насколько быстро сервер отдаёт данные. */
+    private val httpProber: HttpProber? = null,
 ) {
     /** Адреса-«обнуляторы»: такой ответ означает блокировку домена, а не разблокировку. */
     private val nullRouteAddresses = setOf("0.0.0.0", "::", "0:0:0:0:0:0:0:0")
@@ -282,13 +285,25 @@ class HostsGenerator(
         // Кандидаты проверяются параллельно: мёртвый адрес отваливается по таймауту,
         // и последовательная проверка растягивала один домен до десятков секунд.
         val fast = checkAll(validator, domain, candidates, request.ipValidationTimeoutMillis)
-        fast.firstOrNull { it.second == IpCheckResult.SERVES }?.let { return it.first }
+        // Из подтверждённых берём самый быстрый, а не первый по порядку: рабочие, но медленные
+        // прокси дают страницу за секунды (замер 31.10.2026: 1.18 с против 0.66 с у другого адреса).
+        val confirmedByTls = fast.filter { it.second == IpCheckResult.SERVES }
+        if (confirmedByTls.isNotEmpty()) {
+            val chosen = chooseByResponseTime(domain, confirmedByTls)
+            AppLogger.d(
+                "IP chosen for domain=$domain: ip=${chosen.first}, handshakeMs=${chosen.third}, " +
+                    "all=${fast.joinToString { "${it.first}:${it.second.name}/${it.third}ms" }}",
+            )
+            return chosen.first
+        }
         // Медленные прокси отдают хендшейк за ~10 с: таких перепроверяем с большим таймаутом,
         // иначе рабочие адреса теряются (gemini.google.com через dns.comss.one).
         val unknown = fast.filter { it.second == IpCheckResult.UNKNOWN }.map { it.first }
         if (unknown.isNotEmpty()) {
             val retried = checkAll(validator, domain, unknown, request.ipValidationRetryTimeoutMillis)
-            val confirmed = retried.firstOrNull { it.second == IpCheckResult.SERVES }?.first
+            val confirmed = retried.filter { it.second == IpCheckResult.SERVES }
+                .minByOrNull { it.third }
+                ?.first
             if (confirmed == null) {
                 AppLogger.e(
                     "No IP confirmed by TLS for domain: domain=$domain, " +
@@ -306,13 +321,53 @@ class HostsGenerator(
         return null
     }
 
+    /**
+     * Из подтверждённых адресов выбирает тот, что быстрее отвечает по HTTP.
+     *
+     * Замер 31.10.2026: у `157.22.178.170` рукопожатие иногда быстрее, но страница качалась
+     * 1.18 с против 0.66 с у другого адреса — TLS-время это не показывает. Если пробы HTTP нет,
+     * остаётся прежний критерий (время хендшейка).
+     */
+    private suspend fun chooseByResponseTime(
+        domain: String,
+        confirmed: List<Triple<String, IpCheckResult, Long>>,
+    ): Triple<String, IpCheckResult, Long> {
+        val prober = httpProber ?: return confirmed.minByOrNull { it.third }!!
+        if (confirmed.size == 1) return confirmed.first()
+        val measured = coroutineScope {
+            confirmed.map { candidate ->
+                async {
+                    val startedAt = TimeSource.Monotonic.markNow()
+                    val probe = runCatching { prober.probe(domain, candidate.first) }.getOrNull()
+                    val elapsed = probe?.elapsedMs ?: startedAt.elapsedNow().inWholeMilliseconds
+                    candidate to (if (probe?.isUsable == true) elapsed else Long.MAX_VALUE)
+                }
+            }.awaitAll()
+        }
+        AppLogger.d(
+            "Response time for domain=$domain: " +
+                measured.joinToString { "${it.first.first}=${it.second}ms" },
+        )
+        return (measured.minByOrNull { it.second } ?: measured.first()).first
+    }
+
+    /**
+     * Проверяет адреса параллельно и замеряет время каждого: подтверждённый, но медленный
+     * адрес — такая же проблема, как нерабочий, только заметна позже.
+     */
     private suspend fun checkAll(
         validator: IpValidator,
         domain: String,
         ips: List<String>,
         timeoutMillis: Int,
-    ): List<Pair<String, IpCheckResult>> = coroutineScope {
-        ips.map { ip -> async { ip to validator.check(domain, ip, timeoutMillis) } }.awaitAll()
+    ): List<Triple<String, IpCheckResult, Long>> = coroutineScope {
+        ips.map { ip ->
+            async {
+                val startedAt = TimeSource.Monotonic.markNow()
+                val result = validator.check(domain, ip, timeoutMillis)
+                Triple(ip, result, startedAt.elapsedNow().inWholeMilliseconds)
+            }
+        }.awaitAll()
     }
 
     private suspend fun resolveSafely(

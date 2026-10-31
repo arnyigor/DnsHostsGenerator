@@ -279,6 +279,14 @@ class MainActivity : Activity() {
 
     private fun startVpn() {
         prefs.edit().putString(KEY_RULES, rulesInput.text.toString()).apply()
+        // Адрес прокси живёт часами, поэтому по умолчанию автоподбор включается вместе с VPN.
+        // Если пользователь выключил его руками (ключ уже есть) — уважаем выбор.
+        if (!prefs.contains(KEY_AUTO)) {
+            prefs.edit().putBoolean(KEY_AUTO, true).commit()
+            renderAutoButton(true)
+            startAutoUpdate()
+            updateStatus.text = "Автоподбор включён: адрес будет проверяться раз в 15 минут"
+        }
         val prepare = VpnService.prepare(this)
         if (prepare != null) {
             startActivityForResult(prepare, REQUEST_VPN)

@@ -34,7 +34,7 @@ class LiveGenerationValidationTest {
             .filter { it.isNotEmpty() && !it.startsWith("#") }
             .take(30)
             .toList()
-        val generator = HostsGenerator(createDnsResolver(), createIpValidator())
+        val generator = HostsGenerator(createDnsResolver(), createIpValidator(), createHttpProber())
 
         val started = System.currentTimeMillis()
         val result = generator.generate(

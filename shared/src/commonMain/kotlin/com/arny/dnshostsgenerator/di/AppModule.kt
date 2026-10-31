@@ -23,7 +23,7 @@ val appModule = module {
     single { get<AppDatabase>().groupDao() }
 
     // get() автоматически подставит DnsResolver, который мы зарегистрировали выше
-    single { HostsGenerator(get(), createIpValidator()) }
+    single { HostsGenerator(get(), createIpValidator(), createHttpProber()) }
     single { DnsChecker(get(), createIpValidator()) }
     single { ProfileChecker(get(), createIpValidator(), createHttpProber()) }
 

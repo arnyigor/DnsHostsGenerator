@@ -51,6 +51,8 @@ class DnsVpnService : VpnService() {
         Log.i(TAG, "Старт: подмен ${rules.mappings.size}, блокировок ${rules.blocked.size}")
         startForeground(NOTIFICATION_ID, buildNotification(rules))
         UpstreamDot.logger = { message -> Log.w(TAG, message) }
+        // Прогрев соединения: первый DNS-запрос приложения не должен ждать TLS-рукопожатия.
+        UpstreamDot.warmUp()
 
         val builder = Builder()
             .setSession("DNS-подмены")

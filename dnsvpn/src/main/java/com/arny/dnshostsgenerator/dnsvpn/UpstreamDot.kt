@@ -33,6 +33,7 @@ object UpstreamDot {
     private const val MIN_CACHE_MS = 30_000L
     private const val MAX_CACHE_MS = 600_000L
     private const val CACHE_LIMIT = 2_048
+    private const val SLOT_COUNT = 4
 
     /**
      * Адрес + имя для проверки сертификата. Подключаемся по IP: это убирает резолв имени
@@ -51,9 +52,29 @@ object UpstreamDot {
 
     private data class CacheEntry(val response: ByteArray, val expiresAt: Long)
 
-    /** Постоянное соединение: TLS-хендшейк стоит сотни миллисекунд, его нельзя делать на каждый запрос. */
-    private val connectionLock = Any()
-    private var connection: Pair<String, SSLSocket>? = null
+    /**
+     * Одно постоянное соединение под замком.
+     *
+     * Пробовал пул на 4 соединения: параллельные TLS-хендшейки к одному апстриму упираются
+     * в его же лимиты, запросы падают по таймауту (замер 31.10.2026: 20 параллельных запросов
+     * заняли 45 с, ответов 0). С тёплым одиночным соединением те же запросы укладываются
+     * в доли секунды, потому что накладные расходы — только RTT, без рукопожатия.
+     */
+    /**
+     * Небольшой пул соединений под замком на слот.
+     *
+     * Одно соединение сериализует запросы: 8 параллельных занимали 4.4 с (по ~0.4 с каждый).
+     * Но и «в лоб» открывать 4 соединения сразу нельзя — апстрим отвечает таймаутами
+     * (20 параллельных новых хендшейков = 45 с, ноль ответов). Поэтому новые соединения
+     * создаются по одному под [connectLock], а дальше запросы идут параллельно по слотам.
+     */
+    private val slots = Array(SLOT_COUNT) { Slot() }
+    private val connectLock = Any()
+
+    private class Slot {
+        var address: String? = null
+        var socket: SSLSocket? = null
+    }
 
     /** Возвращает ответ апстрима или null, если переслать не удалось. */
     fun forward(payload: ByteArray): ByteArray? {
@@ -114,15 +135,36 @@ object UpstreamDot {
             }
             return response
             }
-            if (pass == 0) closeConnection()
+            if (pass == 0) closeAll()
         }
         return null
     }
 
-    private fun exchange(address: String, name: String, payload: ByteArray): ByteArray? =
-        synchronized(connectionLock) {
+    private fun exchange(address: String, name: String, payload: ByteArray): ByteArray? {
+        val slot = acquireSlot(address, name) ?: return null
+        return synchronized(slot) { exchangeInSlot(slot, address, name, payload) }
+    }
+
+    /** Свободный прогретый слот, иначе — новый, созданный по одному под общим замком. */
+    private fun acquireSlot(address: String, name: String): Slot? {
+        slots.firstOrNull { slot ->
+            synchronized(slot) { slot.address == address && slot.socket?.isClosed == false }
+        }?.let { return it }
+        return synchronized(connectLock) {
+            slots.firstOrNull { slot -> synchronized(slot) { slot.socket == null } }?.let { free ->
+                val socket = connect(address, name) ?: return null
+                synchronized(free) {
+                    free.address = address
+                    free.socket = socket
+                }
+                free
+            }
+        }
+    }
+
+    private fun exchangeInSlot(slot: Slot, address: String, name: String, payload: ByteArray): ByteArray? {
         repeat(2) { attempt ->
-            val socket = openConnection(address, name) ?: return null
+            val socket = slot.socket ?: return null
             try {
                 val output = DataOutputStream(socket.outputStream)
                 output.writeShort(payload.size)
@@ -137,25 +179,31 @@ object UpstreamDot {
             } catch (error: Exception) {
                 // Соединение могло закрыться со стороны сервера — один раз переподключаемся.
                 logger("DoT $name: ${error.message}, переподключаюсь (#${attempt + 1})")
-                closeConnection()
+                closeSlot(slot)
             }
         }
-        null
+        return null
     }
 
-    private fun openConnection(address: String, name: String): SSLSocket? {
-        connection?.let { (currentAddress, socket) ->
-            if (currentAddress == address && !socket.isClosed) return socket
-        }
-        closeConnection()
-        val socket = connect(address, name) ?: return null
-        connection = address to socket
-        return socket
+    private fun closeSlot(slot: Slot) {
+        slot.socket?.let { socket -> runCatching { socket.close() } }
+        slot.socket = null
     }
 
-    private fun closeConnection() {
-        connection?.second?.let { socket -> runCatching { socket.close() } }
-        connection = null
+    private fun closeAll() {
+        slots.forEach { slot -> synchronized(slot) { closeSlot(slot) } }
+    }
+
+    /**
+     * Прогрев: соединение открывается заранее, чтобы первый запрос приложения
+     * не оплачивал TLS-рукопожатие.
+     */
+    fun warmUp() {
+        Thread {
+            val (address, name) = upstreams.first()
+            acquireSlot(address, name)
+            logger("DoT прогрет: $name")
+        }.start()
     }
 
     /** Подключение по адресу с проверкой сертификата на [name]. */

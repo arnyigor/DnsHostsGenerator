@@ -6,6 +6,9 @@ import com.arny.dnshostsgenerator.domain.GenerationStats
 import com.arny.dnshostsgenerator.domain.HostLine
 import com.arny.dnshostsgenerator.resolver.DnsQueryOptions
 import com.arny.dnshostsgenerator.resolver.DnsResolver
+import com.arny.dnshostsgenerator.resolver.HttpProber
+import com.arny.dnshostsgenerator.resolver.HttpProbeResult
+import com.arny.dnshostsgenerator.resolver.HttpVerdict
 import com.arny.dnshostsgenerator.resolver.IpCheckResult
 import com.arny.dnshostsgenerator.resolver.IpValidator
 import com.arny.dnshostsgenerator.domain.GenerationProgress
@@ -492,6 +495,118 @@ private class ConcurrencyTrackingFake : DnsResolver {
         delay(10)
         inFlight--
         return if (dnsServer == "1.1.1.1") listOf("10.0.0.1") else listOf("10.0.0.2")
+    }
+}
+
+/**
+ * Рабочий, но медленный адрес не должен попадать в hosts: скорость подтверждённого адреса
+ * влияет на всё, что грузится с этого домена.
+ */
+class FastestIpSelectionTest {
+
+    @Test
+    fun picksFastestConfirmedIp() = runBlocking {
+        val resolver = object : DnsResolver {
+            // Проверочный DNS отдаёт другой адрес, иначе все кандидаты считаются «форвардом».
+            override suspend fun resolveA(domain: String, dnsServer: String, timeoutMillis: Int) =
+                if (dnsServer == "8.8.8.8") listOf("9.9.9.9") else listOf("1.1.1.1", "2.2.2.2")
+
+            override suspend fun resolveA(
+                domain: String,
+                dnsServer: String,
+                timeoutMillis: Int,
+                options: com.arny.dnshostsgenerator.resolver.DnsQueryOptions,
+            ) = resolveA(domain, dnsServer, timeoutMillis)
+        }
+        val generator = HostsGenerator(resolver, DelayIpValidator(slowIp = "1.1.1.1"))
+
+        val result = generator.generate(
+            presetTitle = "test",
+            request = GenerateHostsRequest(
+                primaryDns = "9.9.9.9",
+                checkDns = "8.8.8.8",
+                checkDotHost = "dns.google",
+                inputLines = listOf("chatgpt.com"),
+                outputFileName = "host.txt",
+                dedupEnabled = false,
+                timeoutMillis = 2_000,
+                ipValidationTimeoutMillis = 2_000,
+                ipValidationRetryTimeoutMillis = 2_000,
+            ),
+        )
+
+        val text = result.outputText
+        assertTrue(text.contains("2.2.2.2"), "должен выбираться быстрый адрес: $text")
+        assertFalse(text.contains("1.1.1.1"), "медленный адрес не должен попадать в hosts: $text")
+    }
+}
+
+/**
+ * Быстрый TLS-хендшейк не значит быструю отдачу: выбор идёт по времени HTTP-ответа.
+ */
+class ResponseTimeSelectionTest {
+
+    @Test
+    fun picksByHttpResponseTimeNotByHandshake() = runBlocking {
+        val resolver = object : DnsResolver {
+            override suspend fun resolveA(domain: String, dnsServer: String, timeoutMillis: Int) =
+                if (dnsServer == "8.8.8.8") listOf("9.9.9.9") else listOf("1.1.1.1", "2.2.2.2")
+
+            override suspend fun resolveA(
+                domain: String,
+                dnsServer: String,
+                timeoutMillis: Int,
+                options: com.arny.dnshostsgenerator.resolver.DnsQueryOptions,
+            ) = resolveA(domain, dnsServer, timeoutMillis)
+        }
+        val generator = HostsGenerator(
+            dnsResolver = resolver,
+            ipValidator = object : IpValidator {
+                override suspend fun check(domain: String, ip: String, timeoutMillis: Int): IpCheckResult {
+                    // 1.1.1.1 отвечает на TLS быстрее…
+                    if (ip == "2.2.2.2") delay(200)
+                    return IpCheckResult.SERVES
+                }
+            },
+            // …но HTTP-ответ быстрее у 2.2.2.2.
+            httpProber = object : HttpProber {
+                override suspend fun probe(
+                    host: String,
+                    ip: String,
+                    path: String,
+                    timeoutMillis: Int,
+                ): HttpProbeResult = HttpProbeResult(
+                    verdict = HttpVerdict.OK,
+                    statusCode = 200,
+                    elapsedMs = if (ip == "1.1.1.1") 900 else 120,
+                )
+            },
+        )
+
+        val result = generator.generate(
+            presetTitle = "test",
+            request = GenerateHostsRequest(
+                primaryDns = "9.9.9.9",
+                checkDns = "8.8.8.8",
+                checkDotHost = "dns.google",
+                inputLines = listOf("chatgpt.com"),
+                outputFileName = "host.txt",
+                dedupEnabled = false,
+                timeoutMillis = 2_000,
+                ipValidationTimeoutMillis = 2_000,
+                ipValidationRetryTimeoutMillis = 2_000,
+            ),
+        )
+
+        assertTrue(result.outputText.contains("2.2.2.2"), "выбор должен идти по HTTP: ${result.outputText}")
+    }
+}
+
+/** Фейк: все адреса обслуживают домен, но один отвечает медленно. */
+private class DelayIpValidator(private val slowIp: String) : IpValidator {
+    override suspend fun check(domain: String, ip: String, timeoutMillis: Int): IpCheckResult {
+        if (ip == slowIp) delay(300)
+        return IpCheckResult.SERVES
     }
 }
 
