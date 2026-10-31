@@ -112,14 +112,20 @@ class DnsVpnService : VpnService() {
                 }
             }
         }
-        runCatching { input.close() }
-        runCatching { output.close() }
+        // Потоки не закрываем здесь: их закроет stopVpn вместе с дескриптором,
+        // иначе рабочие потоки получают "Stream Closed" при записи ответа.
     }
 
     private fun handleQuery(payload: ByteArray, rules: DnsRules): ByteArray? {
         when (val decision = DnsAnswerer.decide(payload, rules)) {
             is DnsDecision.Reply -> {
                 answered.incrementAndGet()
+                runCatching {
+                    val question = org.xbill.DNS.Message(payload).question
+                    val host = question?.name?.toString(true)?.trimEnd('.')
+                    val mapped = host?.let { rules.mappingFor(it) }
+                    Log.i(TAG, "ANSWER ${host ?: "?"} type=${question?.type} -> ${mapped ?: "blocked"}")
+                }
                 logCounters()
                 return decision.payload
             }
