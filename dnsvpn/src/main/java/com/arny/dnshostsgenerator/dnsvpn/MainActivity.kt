@@ -81,10 +81,17 @@ class MainActivity : Activity() {
         }
         rulesInput = EditText(this).apply {
             setText(prefs.getString(KEY_RULES, null) ?: DEFAULT_RULES)
-            minLines = 6
+            // Поле тянется на весь экран и раньше выталкивало кнопки за пределы видимой части.
+            // Теперь оно занимает остаток места и прокручивается внутри себя.
+            minLines = 3
+            isSingleLine = false
+            setHorizontallyScrolling(false)
+            isVerticalScrollBarEnabled = true
+            overScrollMode = android.view.View.OVER_SCROLL_IF_CONTENT_SCROLLS
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
+                0,
+                1f,
             )
         }
         startButton = Button(this).apply {
@@ -99,13 +106,14 @@ class MainActivity : Activity() {
             text = "Автоподбор адреса: выключен"
             setOnClickListener { toggleAutoUpdate() }
         }
-        layout.addView(TextView(this).apply { text = "Правила (>домен IP, домен = блок)" })
-        layout.addView(rulesInput)
+        // Порядок важен: состояние и кнопки сверху, редактор правил — ниже и в остатке экрана.
+        layout.addView(status)
         layout.addView(startButton)
         layout.addView(stopButton)
         layout.addView(autoButton)
-        layout.addView(status)
         layout.addView(updateStatus)
+        layout.addView(TextView(this).apply { text = "Правила (>домен IP, домен = блок)" })
+        layout.addView(rulesInput)
         setContentView(layout)
 
         createNotificationChannel()
