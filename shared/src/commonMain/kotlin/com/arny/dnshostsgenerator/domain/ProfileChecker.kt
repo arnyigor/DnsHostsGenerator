@@ -262,3 +262,24 @@ suspend fun ProfileChecker.resolvePerHost(
 
 private val NULL_ROUTES = setOf("0.0.0.0", "::")
 private const val MAX_CANDIDATES = 4
+
+/**
+ * Быстрая проверка текущих правил: живы ли уже подобранные адреса.
+ *
+ * Полный перебор 17 доменов × несколько адресов занимает до минуты, а нужен он редко:
+ * адреса живут часами. Если выборочная проверка проходит, автоподбор ничего не меняет.
+ */
+suspend fun ProfileChecker.verifyRules(
+    entries: Map<String, String>,
+    sampleSize: Int = 3,
+): Boolean {
+    if (entries.isEmpty()) return false
+    val sample = entries.entries.take(sampleSize)
+    return sample.all { (host, ip) ->
+        val tls = runCatching { ipValidator.check(host, ip, 4_000) }
+            .getOrDefault(IpCheckResult.REJECTED)
+        if (tls != IpCheckResult.SERVES) return@all false
+        val probe = runCatching { httpProber.probe(host, ip) }.getOrNull() ?: return@all false
+        probe.verdict != HttpVerdict.REGION_BLOCKED && probe.verdict != HttpVerdict.FAILED
+    }
+}

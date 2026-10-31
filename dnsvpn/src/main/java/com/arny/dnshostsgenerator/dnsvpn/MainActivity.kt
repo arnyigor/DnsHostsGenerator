@@ -19,6 +19,7 @@ import com.arny.dnshostsgenerator.domain.BuiltInAppProfiles
 import com.arny.dnshostsgenerator.domain.ProfileChecker
 import com.arny.dnshostsgenerator.domain.buildPersonalDnsFilterRules
 import com.arny.dnshostsgenerator.domain.resolvePerHost
+import com.arny.dnshostsgenerator.domain.verifyRules
 import com.arny.dnshostsgenerator.resolver.createDnsResolver
 import com.arny.dnshostsgenerator.resolver.createHttpProber
 import com.arny.dnshostsgenerator.resolver.createIpValidator
@@ -239,6 +240,17 @@ class MainActivity : Activity() {
             .filter { it.enabledByDefault }
             .ifEmpty { BuiltInDnsPresets.defaults }
             .take(MAX_PRESETS_PER_REFRESH)
+        // Сначала проверяем текущие правила: полный перебор занимает до минуты.
+        val currentEntries = currentRulesEntries()
+        if (currentEntries.isNotEmpty() &&
+            withContext(Dispatchers.IO) { checker.verifyRules(currentEntries) }
+        ) {
+            val message = "$reason: текущие адреса рабочие, обновление не нужно"
+            prefs.edit().putString(KEY_LAST_UPDATE, message).apply()
+            updateStatus.text = message
+            android.util.Log.i("DnsVpn", "AUTO: $message")
+            return null
+        }
         var lastFailure: String? = null
         for (preset in presets) {
             updateStatus.text = "$reason: проверяю ${profile.hosts.size} доменов через ${preset.title}…"
@@ -280,6 +292,10 @@ class MainActivity : Activity() {
         android.util.Log.i("DnsVpn", "AUTO: $message")
         return null
     }
+
+    /** Текущие правила из поля ввода в виде карты «домен → адрес». */
+    private fun currentRulesEntries(): Map<String, String> =
+        DnsRules.parse(rulesInput.text.toString()).mappings
 
     private fun buildRulesText(hosts: List<String>, ip: String): String = buildString {
         hosts.forEach { appendLine(">$it $ip") }
