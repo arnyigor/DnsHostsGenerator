@@ -22,6 +22,9 @@ data class DnsRules(
 
     fun isBlocked(domain: String): Boolean = domain.lowercase().trimEnd('.') in blocked
 
+    /** Адрес, который используется во всех подменах; null, если адреса разные или их нет. */
+    fun singleIp(): String? = mappings.values.toSet().singleOrNull()
+
     companion object {
         private val IPV4 = Regex("""^\d{1,3}(\.\d{1,3}){3}$""")
 

@@ -36,6 +36,13 @@ class DnsVpnCoreTest {
     }
 
     @Test
+    fun rules_singleIpDetectsUniformAndMixedAddresses() {
+        assertEquals("45.13.237.213", rules.singleIp())
+        val mixed = DnsRules.parse(listOf(">a.example 1.1.1.1", ">b.example 2.2.2.2").joinToString(separator = "\n"))
+        assertNull(mixed.singleIp(), "разные адреса не дают одного значения")
+    }
+
+    @Test
     fun rules_recogniseHostsFileLinesAsNotBlocked() {
         val parsed = DnsRules.parse("0.0.0.0 ads.example")
         assertTrue(parsed.blocked.isEmpty(), "строка hosts-файла не должна превращаться в домен-блок")

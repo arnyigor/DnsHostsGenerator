@@ -100,15 +100,11 @@ private class DnsJavaResolver : DnsResolver {
             "DNS query started (DoT): type=A, domain=$domain, dotHost=$dotHost, " +
                 "timeoutMs=$timeoutMillis, allowInvalidTls=$allowInvalidTls",
         )
-        // TCP-соединение с таймаутом: createSocket(host, port) коннектится без него, и мёртвый
-        // DoT-сервер (dns.us.geohide.ru) вешал генерацию на дефолтный SYN-таймаут ОС.
-        val raw = java.net.Socket()
-        try {
-            raw.connect(java.net.InetSocketAddress(dotHost, DOT_PORT), timeoutMillis)
-        } catch (error: Exception) {
-            runCatching { raw.close() }
-            throw error
-        }
+        // TCP-соединение с таймаутом и перебором всех адресов имени: createSocket(host, port)
+        // коннектится без таймаута, а InetSocketAddress берёт только первый адрес — если он
+        // заблокирован, рабочий DoT-сервер считается мёртвым (проверено 31.10.2026:
+        // eu.geohide.ru → 143.20.64.192 не отвечает на 853, другие его адреса отвечают).
+        val raw = connectAnyAddress(dotHost, DOT_PORT, timeoutMillis)
         val socket = socketFactory(allowInvalidTls)
             .createSocket(raw, dotHost, DOT_PORT, true) as SSLSocket
         try {
@@ -185,5 +181,26 @@ private class DnsJavaResolver : DnsResolver {
                 init(null, trustAll, SecureRandom())
             }.socketFactory
         }
+    }
+
+    /**
+     * Подключается к первому адресу имени, который принял соединение.
+     * Имя DoT-сервера часто имеет несколько адресов, и часть из них может быть недоступна.
+     */
+    private fun connectAnyAddress(host: String, port: Int, timeoutMillis: Int): java.net.Socket {
+        val addresses = runCatching { java.net.InetAddress.getAllByName(host).toList() }
+            .getOrElse { emptyList() }
+        var lastError: Exception? = null
+        addresses.forEach { address ->
+            val socket = java.net.Socket()
+            try {
+                socket.connect(java.net.InetSocketAddress(address, port), timeoutMillis)
+                return socket
+            } catch (error: Exception) {
+                lastError = error
+                runCatching { socket.close() }
+            }
+        }
+        throw lastError ?: java.net.UnknownHostException(host)
     }
 }

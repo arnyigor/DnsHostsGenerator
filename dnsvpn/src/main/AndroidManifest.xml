@@ -8,8 +8,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
-        android:label="DNS VPN (тест)"
-        android:icon="@android:drawable/ic_menu_manage"
+        android:label="DNS VPN"
         android:theme="@android:style/Theme.DeviceDefault.DayNight">
 
         <activity

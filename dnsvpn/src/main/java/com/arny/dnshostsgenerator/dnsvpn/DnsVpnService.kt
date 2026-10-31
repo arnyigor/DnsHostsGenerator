@@ -80,6 +80,10 @@ class DnsVpnService : VpnService() {
             return
         }
         tun = descriptor
+        running = true
+        ruleCount = rules.mappings.size
+        answeredQueries = 0
+        forwardedQueries = 0
         reader = Thread({ readLoop(descriptor, rules) }, "dnsvpn-reader").also { it.start() }
         // Самопроверка без участия пользователя: процесс службы уже в нашем VPN,
         // поэтому штатный резолвер должен вернуть подменённые адреса.
@@ -156,6 +160,8 @@ class DnsVpnService : VpnService() {
     private fun logCounters() {
         val answeredCount = answered.get()
         val forwardedCount = forwarded.get()
+        answeredQueries = answeredCount
+        forwardedQueries = forwardedCount
         if ((answeredCount + forwardedCount) % 20 == 0) {
             Log.i(TAG, "Ответов локально: $answeredCount, переслано: $forwardedCount")
         }
@@ -184,6 +190,7 @@ class DnsVpnService : VpnService() {
     }
 
     private fun stopVpn() {
+        running = false
         reader?.interrupt()
         reader = null
         runCatching { tun?.close() }
@@ -206,10 +213,32 @@ class DnsVpnService : VpnService() {
     }
 
     companion object {
+        /** Состояние для интерфейса: служба живёт в том же процессе, поэтому флаг достаточен. */
+        @Volatile
+        var running: Boolean = false
+            private set
+
+        @Volatile
+        var ruleCount: Int = 0
+            private set
+
+        /** Сколько запросов обслужено нашими правилами. */
+        @Volatile
+        var answeredQueries: Int = 0
+            private set
+
+        /** Сколько запросов ушло во внешний резолвер. */
+        @Volatile
+        var forwardedQueries: Int = 0
+            private set
+
         /** Пакеты, которые никогда не должны попадать в наш VPN. */
         private val EXCLUDED_PACKAGES = listOf(
             "ru.arny.taskbridge",
             "com.arny.dnshostsgenerator",
+            // Себя тоже исключаем: иначе запросы к DoT-серверу из самой службы уходят
+            // в собственный VPN и разрешение имён зацикливается (проверено 31.10.2026).
+            "com.arny.dnshostsgenerator.dnsvpn",
         )
 
         private const val TAG = "DnsVpn"

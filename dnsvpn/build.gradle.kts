@@ -1,4 +1,5 @@
 plugins {
+    // Библиотека: экран и запуск службы теперь в основном приложении.
     alias(libs.plugins.androidApplication)
 }
 
@@ -7,19 +8,13 @@ android {
     compileSdk = libs.versions.android.compileSdk.get().toInt()
 
     defaultConfig {
-        // Отдельный APK: основной DnsHostsGenerator этот модуль не использует.
         applicationId = "com.arny.dnshostsgenerator.dnsvpn"
-        minSdk = libs.versions.android.minSdk.get().toInt()
-        targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1
         versionName = "0.1.0"
+        targetSdk = libs.versions.android.targetSdk.get().toInt()
+        minSdk = libs.versions.android.minSdk.get().toInt()
     }
 
-    buildTypes {
-        release {
-            isMinifyEnabled = false
-        }
-    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -33,6 +28,7 @@ dependencies {
     implementation(libs.dnsjava)
     implementation(libs.kotlinx.coroutinesCore)
     implementation(libs.koin.core)
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit")

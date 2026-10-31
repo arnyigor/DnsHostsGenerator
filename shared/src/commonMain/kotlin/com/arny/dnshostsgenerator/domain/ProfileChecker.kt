@@ -79,6 +79,7 @@ class ProfileChecker(
         tlsTimeoutMillis: Int = 6_000,
     ): ProfileCheckResult {
         val startedAt = TimeSource.Monotonic.markNow()
+        var resolveError: String? = null
         val resolved = coroutineScope {
             profile.hosts.map { host ->
                 async {
@@ -93,6 +94,12 @@ class ProfileChecker(
                                 allowPlainFallback = false,
                             ),
                         )
+                    }.onFailure { error ->
+                        // Ошибку DNS показываем в итоговом detail: иначе «не вернул адреса»
+                        // выглядит одинаково и для таймаута, и для неверного конфига пресета.
+                        if (resolveError == null) {
+                            resolveError = "$host: ${error::class.simpleName}: ${error.message}"
+                        }
                     }.getOrDefault(emptyList())
                 }
             }.awaitAll()
@@ -119,7 +126,8 @@ class ProfileChecker(
                 hostChecks = emptyList(),
                 candidatesTried = emptyList(),
                 elapsedMs = startedAt.elapsedNow().inWholeMilliseconds,
-                detail = "DNS не вернул адреса для доменов профиля",
+                detail = "DNS не вернул адреса для доменов профиля" +
+                    (resolveError?.let { " ($it)" } ?: ""),
             )
         }
 
