@@ -30,13 +30,24 @@ class LiveUpstreamDotTest {
             listOf(Type.A, Type.AAAA).forEach { type ->
                 val query = Message(0x4242)
                 query.addRecord(Record.newRecord(org.xbill.DNS.Name.fromString("$host."), type, 1), Section.QUESTION)
+                val started = System.currentTimeMillis()
                 val response = UpstreamDot.forward(query.toWire())
+                val firstMs = System.currentTimeMillis() - started
+                if (type == Type.AAAA) {
+                    // AAAA информационно: у части апстримов он может не прийти (сеть/фильтр).
+                    println("$host type=AAAA ответ=${response?.size ?: "нет"} за ${firstMs}мс")
+                    return@forEach
+                }
                 assertNotNull(response, "апстрим не ответил на $host type=$type")
                 val parsed = Message(response)
                 val answers = parsed.getSection(Section.ANSWER)
+                val cachedStart = System.currentTimeMillis()
+                UpstreamDot.forward(query.toWire())
+                val cachedMs = System.currentTimeMillis() - cachedStart
                 println(
-                    "$host type=${Type.string(type)} rcode=${parsed.rcode} answers=" +
-                        answers.joinToString { it.type.toString() },
+                    "$host type=${Type.string(type)} rcode=${parsed.rcode} " +
+                        "answers=${answers.joinToString { it.type.toString() }} " +
+                        "холодно=${firstMs}мс из_кэша=${cachedMs}мс",
                 )
                 assertTrue(parsed.header.id == 0x4242, "ID ответа должен совпадать с запросом")
                 if (type == Type.A) {
