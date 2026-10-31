@@ -15,6 +15,7 @@ import com.arny.dnshostsgenerator.domain.DnsPresetUnusableException
 import com.arny.dnshostsgenerator.domain.DnsProviderPreset
 import com.arny.dnshostsgenerator.domain.GenerateHostsRequest
 import com.arny.dnshostsgenerator.domain.GenerationResult
+import com.arny.dnshostsgenerator.domain.ProfileChecker
 import com.arny.dnshostsgenerator.generator.HostsGenerator
 import com.arny.dnshostsgenerator.logging.AppLogger
 import com.arny.dnshostsgenerator.nextdns.HostsParser
@@ -60,6 +61,8 @@ data class HostsGeneratorState(
     val toastText: String? = null,
     /** Блок «Проверка DNS»: какой сервер сейчас реально работает. */
     val dnsCheck: DnsCheckUiState = DnsCheckUiState(),
+    /** Блок «Правила для приложения»: подбор одного адреса под все домены профиля. */
+    val appProfile: AppProfileUiState = AppProfileUiState(),
 ) {
     val selectedPresets: List<DnsProviderPreset>
         get() = if (selectedPresetIds.isEmpty()) {
@@ -92,6 +95,8 @@ sealed interface HostsGeneratorEvent {
     object OnSelectAllPresets : HostsGeneratorEvent
     object OnClearPresets : HostsGeneratorEvent
     data class OnDnsCheckDomainChanged(val domain: String) : HostsGeneratorEvent
+    /** Подбор адреса для профиля приложения на выбранном пресете. */
+    object OnAppProfileCheck : HostsGeneratorEvent
     object OnDnsCheck : HostsGeneratorEvent
     object OnDnsCheckCancel : HostsGeneratorEvent
     object OnGenerate : HostsGeneratorEvent
@@ -105,6 +110,7 @@ class HostsGeneratorViewModel(
     private val generator: HostsGenerator,
     private val groupDao: GroupDao,
     private val dnsChecker: DnsChecker,
+    private val profileChecker: ProfileChecker,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(HostsGeneratorState())
@@ -115,6 +121,7 @@ class HostsGeneratorViewModel(
 
     private var generationJob: Job? = null
     private var dnsCheckJob: Job? = null
+    private var appProfileJob: Job? = null
 
     init {
         observeDomainGroups()
@@ -169,6 +176,7 @@ class HostsGeneratorViewModel(
                 it.copy(dnsCheck = it.dnsCheck.copy(domain = event.domain))
             }
 
+            HostsGeneratorEvent.OnAppProfileCheck -> runAppProfileCheck()
             HostsGeneratorEvent.OnDnsCheck -> runDnsCheck()
             HostsGeneratorEvent.OnDnsCheckCancel -> {
                 dnsCheckJob?.cancel()
@@ -195,6 +203,64 @@ class HostsGeneratorViewModel(
      * Проверяет все DNS-пресеты по одному домену: жив ли сервер и обслуживает ли выданный
      * адрес этот домен. Результат сортируется: рабочие сверху, по времени ответа.
      */
+    /**
+     * Подбирает один адрес, который обслуживает ВСЕ домены профиля приложения.
+     * Проверяется только выбранный пресет: правило подмены строится из одного адреса,
+     * поэтому смешивать серверы нельзя.
+     */
+    private fun runAppProfileCheck() {
+        val preset = _state.value.selectedPresets.firstOrNull()
+        if (preset == null) {
+            _state.update {
+                it.copy(appProfile = it.appProfile.copy(progressText = "Сначала выберите DNS-пресет"))
+            }
+            return
+        }
+        appProfileJob?.cancel()
+        _state.update {
+            it.copy(
+                appProfile = it.appProfile.copy(
+                    isRunning = true,
+                    result = null,
+                    progressText = "Проверяю ${AppProfileHolder.profile.title} через ${preset.title}…",
+                ),
+            )
+        }
+        appProfileJob = viewModelScope.launch {
+            try {
+                val result = profileChecker.check(AppProfileHolder.profile, preset)
+                _state.update {
+                    it.copy(
+                        appProfile = it.appProfile.copy(
+                            isRunning = false,
+                            result = result,
+                            progressText = if (result.isUsable) {
+                                "Адрес ${result.ip} подходит: ${result.hostChecks.size} доменов проверено"
+                            } else {
+                                "Рабочий адрес не найден: ${result.detail.orEmpty().take(120)}"
+                            },
+                        ),
+                    )
+                }
+            } catch (error: CancellationException) {
+                _state.update {
+                    it.copy(appProfile = it.appProfile.copy(isRunning = false, progressText = "Подбор остановлен"))
+                }
+                throw error
+            } catch (error: Exception) {
+                AppLogger.e("App profile check failed", error)
+                _state.update {
+                    it.copy(
+                        appProfile = it.appProfile.copy(
+                            isRunning = false,
+                            progressText = "Ошибка: ${error.message ?: error::class.simpleName}",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
     private fun runDnsCheck() {
         val rawDomain = _state.value.dnsCheck.domain.trim()
         val domain = rawDomain

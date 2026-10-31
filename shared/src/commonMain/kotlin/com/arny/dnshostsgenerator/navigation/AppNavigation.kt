@@ -11,6 +11,11 @@ import com.arny.dnshostsgenerator.nextdns.NextDnsImportState
 import com.arny.dnshostsgenerator.nextdns.NextDnsQuickImportCard
 import com.arny.dnshostsgenerator.nextdns.quickImportSource
 import com.arny.dnshostsgenerator.platform.isMobilePlatform
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.ui.unit.dp
+import com.arny.dnshostsgenerator.presentation.AppProfileCard
+import com.arny.dnshostsgenerator.presentation.AppProfileUiState
 import com.arny.dnshostsgenerator.presentation.DnsCheckCard
 import com.arny.dnshostsgenerator.presentation.DnsCheckUiState
 import com.arny.dnshostsgenerator.presentation.HostsGeneratorEvent
@@ -28,6 +33,8 @@ fun AppNavigation(
     onHostsGeneratorEvent: (HostsGeneratorEvent) -> Unit,
     nextDnsImportState: NextDnsImportState,
     onNextDnsImportEvent: (NextDnsImportEvent) -> Unit,
+    appProfileState: AppProfileUiState,
+    onAppProfileCheck: () -> Unit,
     dnsCheckState: DnsCheckUiState,
     onDnsCheckDomainChanged: (String) -> Unit,
     onDnsCheckRun: () -> Unit,
@@ -59,12 +66,15 @@ fun AppNavigation(
                     null
                 },
                 dnsCheck = {
-                    DnsCheckCard(
-                        state = dnsCheckState,
-                        onDomainChanged = onDnsCheckDomainChanged,
-                        onRunCheck = onDnsCheckRun,
-                        onCancelCheck = onDnsCheckCancel,
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        AppProfileCard(state = appProfileState, onRun = onAppProfileCheck)
+                        DnsCheckCard(
+                            state = dnsCheckState,
+                            onDomainChanged = onDnsCheckDomainChanged,
+                            onRunCheck = onDnsCheckRun,
+                            onCancelCheck = onDnsCheckCancel,
+                        )
+                    }
                 },
             )
         }

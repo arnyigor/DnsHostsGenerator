@@ -74,6 +74,8 @@ fun AppContent() {
                 onHostsGeneratorEvent = hostsGeneratorViewModel::onEvent,
                 nextDnsImportState = nextDnsImportState,
                 onNextDnsImportEvent = nextDnsImportViewModel::onEvent,
+                appProfileState = hostsGeneratorState.appProfile,
+                onAppProfileCheck = { hostsGeneratorViewModel.onEvent(HostsGeneratorEvent.OnAppProfileCheck) },
                 dnsCheckState = hostsGeneratorState.dnsCheck,
                 onDnsCheckDomainChanged = {
                     hostsGeneratorViewModel.onEvent(HostsGeneratorEvent.OnDnsCheckDomainChanged(it))
