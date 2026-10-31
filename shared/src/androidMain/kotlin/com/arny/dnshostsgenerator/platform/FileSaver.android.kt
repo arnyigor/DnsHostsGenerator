@@ -9,6 +9,9 @@ import java.io.File
 
 private var appContext: Context? = null
 
+/** Контекст приложения для платформенных функций (поделиться, файлы). */
+internal fun androidAppContext(): Context? = appContext
+
 fun setAndroidAppContext(context: Context) {
     appContext = context.applicationContext
     AppLogger.d("Android app context set: package=${context.packageName}")

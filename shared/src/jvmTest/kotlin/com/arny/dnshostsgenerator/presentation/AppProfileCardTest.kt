@@ -77,6 +77,7 @@ class AppProfileCardTest {
         onNodeWithText("${profile.hosts[0]} — OK").assertExists()
         onNodeWithText("${profile.hosts[1]} — CLOUDFLARE_BLOCKED").assertExists()
         onNodeWithContentDescription("Скопировать правила").assertIsEnabled()
+        onNodeWithContentDescription("Поделиться правилами").assertIsEnabled()
         onNodeWithText("Подобрать заново").assertExists()
     }
 
@@ -99,6 +100,7 @@ class AppProfileCardTest {
         }
 
         onNodeWithContentDescription("Скопировать правила").assertIsNotEnabled()
+        onNodeWithContentDescription("Поделиться правилами").assertIsNotEnabled()
     }
 
     @Test

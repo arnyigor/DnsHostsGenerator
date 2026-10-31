@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Rule
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -33,6 +34,7 @@ import com.arny.dnshostsgenerator.domain.AppProfile
 import com.arny.dnshostsgenerator.domain.BuiltInAppProfiles
 import com.arny.dnshostsgenerator.domain.ProfileCheckResult
 import com.arny.dnshostsgenerator.domain.buildPersonalDnsFilterRules
+import com.arny.dnshostsgenerator.platform.shareText
 import kotlinx.coroutines.launch
 
 /** Профиль приложения, для которого подбирается адрес (пока один — ChatGPT). */
@@ -94,10 +96,32 @@ fun AppProfileCard(
                         }
                     },
                     enabled = rules != null,
+                    modifier = Modifier.size(40.dp),
                 ) {
                     Icon(
                         imageVector = Icons.Filled.ContentCopy,
                         contentDescription = "Скопировать правила",
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                // Маленькая кнопка «Поделиться»: сразу отправить правила в DNS-VPN или мессенджер.
+                IconButton(
+                    onClick = {
+                        rules?.let {
+                            val sent = shareText("Правила DNS-VPN", it)
+                            scope.launch {
+                                snackbarHostState?.showSnackbar(
+                                    if (sent) "Правила отправлены" else "Не удалось поделиться",
+                                )
+                            }
+                        }
+                    },
+                    enabled = rules != null,
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Share,
+                        contentDescription = "Поделиться правилами",
                         modifier = Modifier.size(18.dp),
                     )
                 }
