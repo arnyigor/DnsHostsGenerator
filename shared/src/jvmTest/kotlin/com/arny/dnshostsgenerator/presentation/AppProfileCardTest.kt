@@ -12,7 +12,7 @@ import com.arny.dnshostsgenerator.domain.AppProfile
 import com.arny.dnshostsgenerator.domain.BuiltInAppProfiles
 import com.arny.dnshostsgenerator.domain.DnsCheckResult
 import com.arny.dnshostsgenerator.domain.DnsCheckStatus
-import com.arny.dnshostsgenerator.domain.ProfileCheckResult
+import com.arny.dnshostsgenerator.domain.MergedRules
 import com.arny.dnshostsgenerator.domain.ProfileHostCheck
 import com.arny.dnshostsgenerator.resolver.HttpProbeResult
 import com.arny.dnshostsgenerator.resolver.HttpVerdict
@@ -70,30 +70,20 @@ class AppProfileCardTest {
         }
 
         onNodeWithText("Правила для ${profile.title}").assertExists()
-        onNodeWithText("Подобрать адрес").assertIsEnabled().performClick()
+        onNodeWithText("Подобрать адреса").assertIsEnabled().performClick()
 
         assertEquals(1, clicks)
     }
 
     @Test
     fun showsHostVerdictsAndEnablesCopyWhenAddressFound() = runComposeUiTest {
-        val checks = profile.hosts.mapIndexed { index, host ->
-            ProfileHostCheck(
-                host = host,
-                tls = IpCheckResult.SERVES,
-                http = HttpProbeResult(
-                    verdict = if (index == 1) HttpVerdict.CLOUDFLARE_BLOCKED else HttpVerdict.OK,
-                ),
-            )
-        }
-        val result = ProfileCheckResult(
+        // Слитый результат: у каждого домена свой адрес и свой пресет.
+        val result = MergedRules(
             profileId = profile.id,
             profileTitle = profile.title,
-            presetId = "p",
-            presetTitle = "preset",
-            ip = "45.13.237.213",
-            hostChecks = checks,
-            candidatesTried = listOf("45.13.237.213"),
+            entries = profile.hosts.associateWith { "45.13.237.213" },
+            sources = profile.hosts.associateWith { "preset" },
+            failed = emptyList(),
             elapsedMs = 1_500,
         )
 
@@ -107,8 +97,7 @@ class AppProfileCardTest {
             )
         }
 
-        onNodeWithText("${profile.hosts[0]} — OK").assertExists()
-        onNodeWithText("${profile.hosts[1]} — CLOUDFLARE_BLOCKED").assertExists()
+        onNodeWithText("${profile.hosts[0]} — 45.13.237.213").assertExists()
         onNodeWithContentDescription("Скопировать правила").assertIsEnabled()
         onNodeWithContentDescription("Поделиться правилами").assertIsEnabled()
         onNodeWithText("Подобрать заново").assertExists()
@@ -116,16 +105,13 @@ class AppProfileCardTest {
 
     @Test
     fun copyIsDisabledWithoutAddress() = runComposeUiTest {
-        val failed = ProfileCheckResult(
+        val failed = MergedRules(
             profileId = profile.id,
             profileTitle = profile.title,
-            presetId = "p",
-            presetTitle = "preset",
-            ip = null,
-            hostChecks = emptyList(),
-            candidatesTried = listOf("1.1.1.1"),
+            entries = emptyMap(),
+            sources = emptyMap(),
+            failed = profile.hosts,
             elapsedMs = 900,
-            detail = "ни один адрес не подошёл",
         )
 
         setContent {

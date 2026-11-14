@@ -268,6 +268,82 @@ suspend fun ProfileChecker.resolvePerHost(
     )
 }
 
+/**
+ * Итог подбора по нескольким пресетам: у каждого домена свой адрес и свой провайдер.
+ */
+data class MergedRules(
+    val profileId: String,
+    val profileTitle: String,
+    /** Домен → адрес; порядок совпадает с порядком доменов в профиле. */
+    val entries: Map<String, String>,
+    /** Домен → название пресета, который дал рабочий адрес. */
+    val sources: Map<String, String>,
+    /** Домены, для которых ни один пресет не дал рабочего адреса. */
+    val failed: List<String>,
+    val elapsedMs: Long,
+) {
+    val isUsable: Boolean get() = entries.isNotEmpty()
+
+    val presetTitles: List<String> get() = sources.values.distinct()
+}
+
+/**
+ * Подбирает адрес для каждого домена, перебирая пресеты по порядку.
+ *
+ * Проверено 14.11.2026: один пресет редко обслуживает всё приложение. Для ChatGPT работает
+ * dns.bezmezhau.com, для Gemini — dns.dns-ai.ru, а перекрёстно они дают мёртвые адреса.
+ * Поэтому адрес берётся первым рабочим, а не «общий на весь профиль».
+ *
+ * Перебор останавливается, когда все домены закрыты или истёк [deadlineMillis]: 19 доменов
+ * × 10 пресетов с TLS-проверкой иначе не укладываются в разумное время.
+ */
+suspend fun ProfileChecker.resolvePerHostMerged(
+    profile: AppProfile,
+    presets: List<DnsProviderPreset>,
+    timeoutMillis: Int = 4_000,
+    tlsTimeoutMillis: Int = 5_000,
+    deadlineMillis: Long = 120_000,
+    onProgress: (done: Int, total: Int, presetTitle: String) -> Unit = { _, _, _ -> },
+): MergedRules {
+    val startedAt = TimeSource.Monotonic.markNow()
+    val entries = mutableMapOf<String, String>()
+    val sources = mutableMapOf<String, String>()
+    for (preset in presets) {
+        val remaining = profile.hosts.filterNot { it in entries }
+        if (remaining.isEmpty()) break
+        if (startedAt.elapsedNow().inWholeMilliseconds > deadlineMillis) break
+        onProgress(entries.size, profile.hosts.size, preset.title)
+        // Быстрый отсев: сначала два домена. Пресет, который не обслуживает даже их,
+        // не стоит проверять на всех 19 — иначе перебор десяти пресетов идёт минутами.
+        val sample = remaining.take(2)
+        val probe = resolvePerHost(
+            profile = profile.copy(hosts = sample),
+            preset = preset,
+            timeoutMillis = timeoutMillis,
+            tlsTimeoutMillis = tlsTimeoutMillis,
+        )
+        if (probe.entries.isEmpty() && remaining.size > sample.size) continue
+        val rules = if (remaining.size == sample.size) probe else resolvePerHost(
+            profile = profile.copy(hosts = remaining),
+            preset = preset,
+            timeoutMillis = timeoutMillis,
+            tlsTimeoutMillis = tlsTimeoutMillis,
+        )
+        rules.entries.forEach { (host, ip) ->
+            entries[host] = ip
+            sources[host] = preset.title
+        }
+    }
+    return MergedRules(
+        profileId = profile.id,
+        profileTitle = profile.title,
+        entries = profile.hosts.filter { it in entries }.associateWith { entries.getValue(it) },
+        sources = sources.filterKeys { it in entries },
+        failed = profile.hosts.filterNot { it in entries },
+        elapsedMs = startedAt.elapsedNow().inWholeMilliseconds,
+    )
+}
+
 private val NULL_ROUTES = setOf("0.0.0.0", "::")
 private const val MAX_CANDIDATES = 4
 

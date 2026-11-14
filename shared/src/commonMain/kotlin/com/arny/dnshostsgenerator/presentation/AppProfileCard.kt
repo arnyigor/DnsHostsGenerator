@@ -33,7 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.arny.dnshostsgenerator.domain.AppProfile
 import com.arny.dnshostsgenerator.domain.BuiltInAppProfiles
-import com.arny.dnshostsgenerator.domain.ProfileCheckResult
+import com.arny.dnshostsgenerator.domain.MergedRules
 import com.arny.dnshostsgenerator.domain.buildPersonalDnsFilterRules
 import com.arny.dnshostsgenerator.platform.shareText
 import kotlinx.coroutines.launch
@@ -48,7 +48,7 @@ data class AppProfileUiState(
     /** Какой набор доменов выбран в карточке: ChatGPT или Gemini. */
     val profileId: String = BuiltInAppProfiles.chatGptAndroid.id,
     val isRunning: Boolean = false,
-    val result: ProfileCheckResult? = null,
+    val result: MergedRules? = null,
     val progressText: String = "Один адрес для всех доменов приложения",
 )
 
@@ -67,7 +67,8 @@ fun AppProfileCard(
     val clipboardManager = LocalClipboardManager.current
     val snackbarHostState = LocalSnackbarHostState.current
     val scope = rememberCoroutineScope()
-    val rules = state.result?.ip?.let { buildPersonalDnsFilterRules(profile, it) }
+    val rules = state.result?.takeIf { it.isUsable }
+        ?.let { buildPersonalDnsFilterRules(it.entries, it.profileTitle) }
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -155,7 +156,7 @@ fun AppProfileCard(
                 FilledTonalButton(onClick = onRun, enabled = !state.isRunning) {
                     Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(if (state.result == null) "Подобрать адрес" else "Подобрать заново")
+                    Text(if (state.result == null) "Подобрать адреса" else "Подобрать заново")
                 }
                 Text(
                     state.progressText,
@@ -168,15 +169,32 @@ fun AppProfileCard(
 
             if (state.isRunning) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
 
-            state.result?.hostChecks?.takeIf { it.isNotEmpty() }?.let { checks ->
-                Column {
-                    checks.forEach { check ->
+            state.result?.let { merged ->
+                if (merged.isUsable) {
+                    Text(
+                        "Подобрано ${merged.entries.size} из ${merged.profileTitle.let { _ -> merged.entries.size + merged.failed.size }} " +
+                            "доменов · пресеты: ${merged.presetTitles.joinToString()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    merged.entries.entries.take(4).forEach { (host, ip) ->
                         Text(
-                            "${check.host} — ${check.http.verdict}",
+                            "$host — $ip",
                             style = MaterialTheme.typography.labelSmall,
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (merged.failed.isNotEmpty()) {
+                        Text(
+                            "Не удалось: ${merged.failed.joinToString()}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }

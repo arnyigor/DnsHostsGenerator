@@ -19,7 +19,7 @@ import com.arny.dnshostsgenerator.domain.DnsPresetUnusableException
 import com.arny.dnshostsgenerator.domain.DnsProviderPreset
 import com.arny.dnshostsgenerator.domain.GenerateHostsRequest
 import com.arny.dnshostsgenerator.domain.GenerationResult
-import com.arny.dnshostsgenerator.domain.ProfileCheckResult
+import com.arny.dnshostsgenerator.domain.resolvePerHostMerged
 import com.arny.dnshostsgenerator.domain.ProfileChecker
 import com.arny.dnshostsgenerator.generator.HostsGenerator
 import com.arny.dnshostsgenerator.logging.AppLogger
@@ -261,78 +261,67 @@ class HostsGeneratorViewModel(
      * поэтому смешивать серверы нельзя.
      */
     private fun runAppProfileCheck() {
-        // Раньше брался только первый выбранный пресет. Если он лежит (так было с comss.one
-        // 14.11.2026), подбор молча упирался в «рабочий адрес не найден», хотя остальные
-        // пресеты рабочие. Теперь перебираем выбранные по порядку и сообщаем, что именно
-        // отказало у каждого.
-        val presetsToTry = _state.value.selectedPresets
+        // Адрес подбирается не «один на всё приложение» и не только на первом пресете:
+        // разные провайдеры обслуживают разные домены (14.11.2026: ChatGPT — bezmezhau,
+        // Gemini — dns.dns-ai.ru), поэтому перебираем пресеты и сливаем результат по доменам.
+        val state = _state.value
+        val allEnabled = state.presets.filter { it.enabledByDefault }
+        val presetsToTry = state.selectedPresets + allEnabled.filter { it.id !in state.selectedPresetIds }
         if (presetsToTry.isEmpty()) {
             _state.update {
                 it.copy(appProfile = it.appProfile.copy(progressText = "Сначала выберите DNS-пресет"))
             }
             return
         }
-        val profile = AppProfileHolder.profile(_state.value.appProfile.profileId)
+        val profile = AppProfileHolder.profile(state.appProfile.profileId)
         appProfileJob?.cancel()
         _state.update {
             it.copy(
                 appProfile = it.appProfile.copy(
                     isRunning = true,
                     result = null,
-                    progressText = "Проверяю ${profile.title} через ${presetsToTry.first().title}…",
+                    progressText = "Подбираю адреса для ${profile.title}…",
                 ),
             )
         }
         appProfileJob = viewModelScope.launch {
             try {
-                val failures = mutableListOf<String>()
-                var result: ProfileCheckResult? = null
-                for (preset in presetsToTry) {
-                    _state.update {
-                        it.copy(
-                            appProfile = it.appProfile.copy(
-                                progressText = "Проверяю ${profile.title} через ${preset.title}…",
-                            ),
-                        )
-                    }
-                    val attempt = try {
-                        profileChecker.check(profile, preset)
-                    } catch (error: CancellationException) {
-                        throw error
-                    } catch (error: Exception) {
-                        AppLogger.e("App profile check failed: preset=${preset.title}", error)
-                        failures += "${preset.title}: ${error.message ?: error::class.simpleName}"
-                        continue
-                    }
-                    AppLogger.d(
-                        "App profile check: preset=${preset.title}, usable=${attempt.isUsable}, " +
-                            "ip=${attempt.ip}, detail=${attempt.detail}",
-                    )
-                    if (attempt.isUsable) {
-                        result = attempt
-                        break
-                    }
-                    failures += "${preset.title}: ${attempt.detail.orEmpty().take(80)}"
-                }
-                val found = result
-                val detail = failures.joinToString("; ").take(200)
+                val merged = profileChecker.resolvePerHostMerged(
+                    profile = profile,
+                    presets = presetsToTry,
+                    onProgress = { done, total, presetTitle ->
+                        _state.update {
+                            it.copy(
+                                appProfile = it.appProfile.copy(
+                                    progressText = "Подобрано $done из $total, проверяю $presetTitle…",
+                                ),
+                            )
+                        }
+                    },
+                )
+                AppLogger.d(
+                    "App profile merged: profile=${profile.title}, ok=${merged.entries.size}, " +
+                        "failed=${merged.failed.size}, presets=${merged.presetTitles}, " +
+                        "ms=${merged.elapsedMs}",
+                )
                 _state.update {
                     it.copy(
                         appProfile = it.appProfile.copy(
                             isRunning = false,
-                            result = found,
-                            progressText = if (found != null) {
-                                "Адрес ${found.ip} подходит: ${found.hostChecks.size} доменов проверено"
+                            result = merged,
+                            progressText = if (merged.isUsable) {
+                                "Адресов: ${merged.entries.size} из " +
+                                    "${merged.entries.size + merged.failed.size}" +
+                                    " · пресеты: ${merged.presetTitles.joinToString()}"
                             } else {
-                                "Рабочий адрес не найден: $detail"
+                                "Рабочих адресов не найдено: ни один пресет не ответил за " +
+                                    "${merged.elapsedMs / 1000} с"
                             },
                         ),
                     )
                 }
             } catch (error: CancellationException) {
-                _state.update {
-                    it.copy(appProfile = it.appProfile.copy(isRunning = false, progressText = "Подбор остановлен"))
-                }
+                _state.update { it.copy(appProfile = it.appProfile.copy(isRunning = false, progressText = "Подбор остановлен")) }
                 throw error
             } catch (error: Exception) {
                 AppLogger.e("App profile check failed", error)
