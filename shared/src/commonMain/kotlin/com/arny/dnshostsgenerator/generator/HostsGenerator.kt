@@ -1,5 +1,6 @@
 package com.arny.dnshostsgenerator.generator
 
+import com.arny.dnshostsgenerator.data.ReservedDomains
 import com.arny.dnshostsgenerator.domain.DnsPresetUnusableException
 import com.arny.dnshostsgenerator.domain.GenerateHostsRequest
 import com.arny.dnshostsgenerator.domain.GenerationProgress
@@ -66,6 +67,7 @@ class HostsGenerator(
         val uniqueDomains = request.inputLines
             .filterNot { it.isBlank() || it.trimStart().startsWith("#") }
             .map { it.trim() }
+            .filterNot { ReservedDomains.isReserved(it) }
             .distinct()
         val lookups = resolveAll(uniqueDomains, request, onProgress)
 
@@ -78,6 +80,7 @@ class HostsGenerator(
         var unresolvedCount = 0
         var duplicateCount = 0
         var blockedCount = 0
+        var skippedCount = 0
 
         for (line in request.inputLines) {
             lineCount++
@@ -97,6 +100,16 @@ class HostsGenerator(
             }
 
             val domain = line.trim()
+
+            // Системные эндпоинты (push, OCSP, проверка связи) подменять нельзя: адрес
+            // Smart DNS ломает Play Services и проверку сертификатов во всём телефоне.
+            if (ReservedDomains.isReserved(domain)) {
+                skippedCount++
+                AppLogger.d("System domain skipped: line=$lineCount, domain=$domain")
+                outputLines += HostLine.Comment("# system: $domain — не подменяется")
+                continue
+            }
+
             if (request.dedupEnabled && domain in processedDomains) {
                 duplicateCount++
                 AppLogger.d("Duplicate domain skipped: line=$lineCount, domain=$domain")
@@ -173,6 +186,7 @@ class HostsGenerator(
             unresolvedCount = unresolvedCount,
             duplicateCount = duplicateCount,
             blockedCount = blockedCount,
+            skippedCount = skippedCount,
         )
 
         // Пресет, который на всё ответил 0.0.0.0, сейчас не разблокирует ничего:

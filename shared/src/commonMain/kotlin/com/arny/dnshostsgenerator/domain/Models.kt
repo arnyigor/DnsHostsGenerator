@@ -155,6 +155,8 @@ data class GenerationStats(
     val duplicateCount: Int,
     /** Сколько доменов DNS пресета обнулил (0.0.0.0/::) — в hosts они не попадают. */
     val blockedCount: Int = 0,
+    /** Сколько системных доменов исключено: подмена ломает push, OCSP и проверку связи. */
+    val skippedCount: Int = 0,
 ) {
     val activeHostsCount: Int
         get() = resolvedCount
