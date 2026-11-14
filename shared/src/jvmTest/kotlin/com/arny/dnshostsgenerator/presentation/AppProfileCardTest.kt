@@ -127,6 +127,9 @@ class AppProfileCardTest {
             )
         }
 
+        // По умолчанию блок свёрнут: на телефоне он отбирал экран до основной задачи.
+        onNodeWithText("Домен для проверки").assertDoesNotExist()
+        onNodeWithText("Проверка DNS").performClick()
         onNodeWithText("Домен для проверки").assertExists()
         onNodeWithText("Проверка DNS").performClick()
 

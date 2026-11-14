@@ -75,7 +75,8 @@ fun DnsCheckCard(
     modifier: Modifier = Modifier,
 ) {
     // Развёрнутость — не часть данных проверки: это локальное предпочтение экрана.
-    var expanded by rememberSaveable { mutableStateOf(true) }
+    // По умолчанию блок свёрнут: на телефоне он отбирал половину экрана до основной задачи.
+    var expanded by rememberSaveable { mutableStateOf(false) }
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(

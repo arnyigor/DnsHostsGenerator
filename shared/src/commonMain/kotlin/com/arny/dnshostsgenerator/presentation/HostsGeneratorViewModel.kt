@@ -3,11 +3,15 @@ package com.arny.dnshostsgenerator.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arny.dnshostsgenerator.data.BuiltInDnsPresets
+import com.arny.dnshostsgenerator.data.customPresetFileName
+import com.arny.dnshostsgenerator.data.mergePresets
 import com.arny.dnshostsgenerator.data.DefaultDomainList
+import com.arny.dnshostsgenerator.data.db.CustomPresetEntity
 import com.arny.dnshostsgenerator.data.db.DomainEntity
 import com.arny.dnshostsgenerator.data.db.GroupDao
 import com.arny.dnshostsgenerator.data.db.GroupEntity
 import com.arny.dnshostsgenerator.data.db.GroupWithDomains
+import com.arny.dnshostsgenerator.data.db.PresetDao
 import com.arny.dnshostsgenerator.domain.DnsCheckResult
 import com.arny.dnshostsgenerator.domain.DnsCheckStatus
 import com.arny.dnshostsgenerator.domain.DnsChecker
@@ -31,6 +35,25 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.random.Random
+
+/**
+ * Пользователь часто вставляет адрес из браузера или из инструкции провайдера.
+ * Оставляем только хост/адрес: схема, путь и порт DoT добавляются приложением.
+ */
+internal fun normalizeDnsAddress(raw: String): String {
+    var value = raw.trim()
+        .removePrefix("https://")
+        .removePrefix("http://")
+        .substringBefore('/')
+        .trim()
+    // Порт отбрасываем только у IPv4/хоста: у IPv6 двоеточий несколько, и резать по
+    // первому нельзя — получится невалидный адрес.
+    if (value.count { it == ':' } == 1) {
+        value = Regex(":\\d{1,5}$").find(value)?.let { value.removeRange(it.range) } ?: value
+    }
+    return value.trim()
+}
 
 data class DomainUi(
     val id: Long,
@@ -94,6 +117,14 @@ sealed interface HostsGeneratorEvent {
     data class OnSelectResult(val index: Int) : HostsGeneratorEvent
     object OnSelectAllPresets : HostsGeneratorEvent
     object OnClearPresets : HostsGeneratorEvent
+    /** Свой DNS-провайдер: адрес вводится вручную, хранится в БД. */
+    data class OnAddCustomPreset(
+        val title: String,
+        val primaryDns: String,
+        val dotHost: String?,
+    ) : HostsGeneratorEvent
+
+    data class OnDeleteCustomPreset(val id: String) : HostsGeneratorEvent
     data class OnDnsCheckDomainChanged(val domain: String) : HostsGeneratorEvent
     /** Подбор адреса для профиля приложения на выбранном пресете. */
     object OnAppProfileCheck : HostsGeneratorEvent
@@ -109,6 +140,7 @@ sealed interface HostsGeneratorEvent {
 class HostsGeneratorViewModel(
     private val generator: HostsGenerator,
     private val groupDao: GroupDao,
+    private val presetDao: PresetDao,
     private val dnsChecker: DnsChecker,
     private val profileChecker: ProfileChecker,
 ) : ViewModel() {
@@ -125,6 +157,7 @@ class HostsGeneratorViewModel(
 
     init {
         observeDomainGroups()
+        observeCustomPresets()
     }
 
     fun onEvent(event: HostsGeneratorEvent) {
@@ -171,6 +204,9 @@ class HostsGeneratorViewModel(
             HostsGeneratorEvent.OnClearPresets -> _state.update {
                 it.copy(selectedPresetIds = emptySet())
             }
+
+            is HostsGeneratorEvent.OnAddCustomPreset -> addCustomPreset(event)
+            is HostsGeneratorEvent.OnDeleteCustomPreset -> deleteCustomPreset(event.id)
 
             is HostsGeneratorEvent.OnDnsCheckDomainChanged -> _state.update {
                 it.copy(dnsCheck = it.dnsCheck.copy(domain = event.domain))
@@ -325,8 +361,76 @@ class HostsGeneratorViewModel(
         }
     }
 
-    private fun observeDomainGroups() {
+    private fun observeCustomPresets() {
         viewModelScope.launch {
+            presetDao.getAll()
+                .catch { error ->
+                    AppLogger.e("Failed to observe custom presets", error)
+                    _state.update {
+                        it.copy(
+                            statusText = "Ошибка загрузки своих DNS: " +
+                                (error.message ?: error::class.simpleName),
+                        )
+                    }
+                }
+                .collect { rows ->
+                    _state.update { it.copy(presets = mergePresets(rows)) }
+                }
+        }
+    }
+
+    private fun addCustomPreset(event: HostsGeneratorEvent.OnAddCustomPreset) {
+        val title = event.title.trim()
+        val address = normalizeDnsAddress(event.primaryDns)
+        val dotHost = normalizeDnsAddress(event.dotHost.orEmpty()).takeIf { it.isNotEmpty() }
+        if (title.isEmpty() || address.isEmpty()) {
+            _state.update { it.copy(statusText = "Укажите название и адрес DNS") }
+            return
+        }
+        val id = "custom_" + Random.nextLong().toULong().toString(16)
+        val entity = CustomPresetEntity(
+            id = id,
+            title = title,
+            primaryDns = address,
+            dotHost = dotHost,
+            checkDns = address,
+            outputFileName = customPresetFileName(title, id),
+            allowInvalidTls = false,
+        )
+        viewModelScope.launch {
+            runCatching { presetDao.upsert(entity) }
+                .onSuccess {
+                    // Свой провайдер сразу выбран: иначе после добавления ничего не изменится.
+                    _state.update {
+                        it.copy(
+                            selectedPresetIds = it.selectedPresetIds + id,
+                            statusText = "Добавлен свой DNS: $title",
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    AppLogger.e("Failed to add custom preset", error)
+                    _state.update { it.copy(statusText = "Не удалось сохранить свой DNS") }
+                }
+        }
+    }
+
+    private fun deleteCustomPreset(id: String) {
+        viewModelScope.launch {
+            runCatching { presetDao.delete(id) }
+                .onSuccess {
+                    _state.update {
+                        it.copy(selectedPresetIds = it.selectedPresetIds - id)
+                    }
+                }
+                .onFailure { error ->
+                    AppLogger.e("Failed to delete custom preset", error)
+                    _state.update { it.copy(statusText = "Не удалось удалить свой DNS") }
+                }
+        }
+    }
+
+    private fun observeDomainGroups() {        viewModelScope.launch {
             groupDao.getAllGroupsWithDomains()
                 .catch { error ->
                     AppLogger.e("Failed to observe domain groups", error)

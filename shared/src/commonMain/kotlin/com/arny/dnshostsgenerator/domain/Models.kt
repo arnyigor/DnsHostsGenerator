@@ -23,6 +23,8 @@ data class DnsProviderPreset(
     val enabledByDefault: Boolean = true,
     /** Почему пресет отключён — показывается в списке вместо обычной подписи. */
     val disabledReason: String? = null,
+    /** Провайдер добавлен пользователем (хранится в БД, можно удалить). */
+    val isCustom: Boolean = false,
 ) {
     companion object {
         /**

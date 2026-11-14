@@ -21,6 +21,7 @@ val appModule = module {
     single { createDnsResolver() }
     single<AppDatabase>(createdAtStart = true) { createAppDatabase() }
     single { get<AppDatabase>().groupDao() }
+    single { get<AppDatabase>().presetDao() }
 
     // get() автоматически подставит DnsResolver, который мы зарегистрировали выше
     single { HostsGenerator(get(), createIpValidator(), createHttpProber()) }
@@ -32,7 +33,7 @@ val appModule = module {
     single { ControlDClient() }
 
     // Регистрация ViewModel (специфичный DSL для поддержки жизненного цикла)
-    viewModel { HostsGeneratorViewModel(get(), get(), get(), get()) }
+    viewModel { HostsGeneratorViewModel(get(), get(), get(), get(), get()) }
     viewModel { NextDnsImportViewModel(get()) }
     viewModel { ControlDImportViewModel(get()) }
 }

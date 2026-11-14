@@ -146,6 +146,10 @@ fun HostsGeneratorScreen(
             onEvent(HostsGeneratorEvent.OnTextCopied)
         },
         onSaveTextFile = { fileName, content -> onEvent(HostsGeneratorEvent.OnSaveTextFile(fileName, content)) },
+        onAddCustomPreset = { title, address, dotHost ->
+            onEvent(HostsGeneratorEvent.OnAddCustomPreset(title, address, dotHost))
+        },
+        onDeleteCustomPreset = { onEvent(HostsGeneratorEvent.OnDeleteCustomPreset(it)) },
         onUpdateSystemHosts = { content -> onEvent(HostsGeneratorEvent.OnUpdateSystemHosts(content)) },
         nextDnsQuickImport = nextDnsQuickImport,
         dnsCheck = dnsCheck,
@@ -187,6 +191,9 @@ fun HostsGeneratorScreen(
     onCopyText: (String) -> Unit,
     onSaveTextFile: (String, String) -> Unit,
     onUpdateSystemHosts: (String) -> Unit = {},
+    /** Свой DNS-провайдер: название, адрес, DoT-хост (может быть пустым). */
+    onAddCustomPreset: (String, String, String?) -> Unit = { _, _, _ -> },
+    onDeleteCustomPreset: (String) -> Unit = {},
     /**
      * Встроенный блок импорта в NextDNS (телефон). Если задан, кнопка перехода
      * на отдельный экран NextDNS не показывается.
@@ -235,6 +242,8 @@ fun HostsGeneratorScreen(
                 onPresetChecked = onPresetChecked,
                 onSelectAll = onSelectAllPresets,
                 onSelectRecommended = onClearPresets,
+                onAddCustomPreset = onAddCustomPreset,
+                onDeleteCustomPreset = onDeleteCustomPreset,
                 onDedupChanged = onDedupChanged,
                 onDomainTextChanged = onDomainTextChanged,
                 onDomainGroupEnabledChanged = onDomainGroupEnabledChanged,
@@ -289,7 +298,8 @@ fun HostsGeneratorScreen(
                     domainEditorModifier = Modifier
                         .fillMaxWidth()
                         .height(480.dp),
-                    dnsCheck = dnsCheck,
+                    // Диагностика на телефоне идёт в самый низ: между кнопкой и результатом ей не место.
+                    dnsCheck = null,
                 )
                 Results(
                     modifier = Modifier
@@ -298,6 +308,7 @@ fun HostsGeneratorScreen(
                 )
                 // Импорт в NextDNS логично идёт после результата: по умолчанию берёт готовый hosts.
                 nextDnsQuickImport?.invoke()
+                dnsCheck?.invoke()
             }
         } else {
             Row(
@@ -354,6 +365,8 @@ private fun ControlsPanel(
     onDeleteDomain: (Long) -> Unit,
     onGenerate: () -> Unit,
     onCancelGeneration: () -> Unit,
+    onAddCustomPreset: (String, String, String?) -> Unit,
+    onDeleteCustomPreset: (String) -> Unit,
     extraContent: (@Composable () -> Unit)?,
     compact: Boolean,
     dnsCheck: (@Composable () -> Unit)? = null,
@@ -364,7 +377,7 @@ private fun ControlsPanel(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Header()
+        Header(compact = compact)
         PresetsPanel(
             presets = presets,
             selectedPresetIds = selectedPresetIds,
@@ -375,31 +388,13 @@ private fun ControlsPanel(
             onPresetChecked = onPresetChecked,
             onSelectRecommended = onSelectRecommended,
             onSelectAll = onSelectAll,
+            onAddCustomPreset = onAddCustomPreset,
+            onDeleteCustomPreset = onDeleteCustomPreset,
         )
-        dnsCheck?.invoke()
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(MaterialTheme.shapes.small)
-                .toggleable(
-                    value = dedupEnabled,
-                    role = Role.Checkbox,
-                    onValueChange = onDedupChanged,
-                )
-                .padding(vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Checkbox(checked = dedupEnabled, onCheckedChange = null)
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text("Убирать дубли доменов", style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    "Повторы помечаются #duplicate, как в исходном скрипте",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
+        // На телефоне диагностические блоки уводятся вниз (см. compact-ветку),
+        // иначе до кнопки генерации нужно листать два экрана.
+        if (!compact) dnsCheck?.invoke()
+        DedupToggle(enabled = dedupEnabled, onChanged = onDedupChanged)
 
         DomainInputArea(
             domainText = domainText,
@@ -428,6 +423,37 @@ private fun ControlsPanel(
             onCancelGeneration = onCancelGeneration,
         )
         extraContent?.invoke()
+    }
+}
+
+/**
+ * Одна строка вместо двух: пояснение про #duplicate нужно не всегда, а место на телефоне дорого.
+ */
+@Composable
+private fun DedupToggle(
+    enabled: Boolean,
+    onChanged: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .toggleable(
+                value = enabled,
+                role = Role.Checkbox,
+                onValueChange = onChanged,
+            )
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = enabled, onCheckedChange = null)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "Убирать дубли доменов (#duplicate)",
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -1150,7 +1176,7 @@ private fun ResultsPanel(
 }
 
 @Composable
-private fun Header() {
+private fun Header(compact: Boolean = false) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1159,18 +1185,24 @@ private fun Header() {
             imageVector = Icons.Default.Dns,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(32.dp),
+            modifier = Modifier.size(if (compact) 26.dp else 32.dp),
         )
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = "DNS Hosts Generator",
-                style = MaterialTheme.typography.headlineSmall,
+                style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = "Отметьте группы доменов и сгенерируйте hosts-файл через рекомендуемый DNS.",
+                text = if (compact) {
+                    "Группы доменов → hosts через выбранный DNS"
+                } else {
+                    "Отметьте группы доменов и сгенерируйте hosts-файл через рекомендуемый DNS."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = if (compact) 1 else 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -1185,24 +1217,32 @@ private fun PresetsPanel(
     onPresetChecked: (String, Boolean) -> Unit,
     onSelectRecommended: () -> Unit,
     onSelectAll: () -> Unit,
+    onAddCustomPreset: (String, String, String?) -> Unit = { _, _, _ -> },
+    onDeleteCustomPreset: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val selectedCount = presets.count { preset ->
+    var addDialogVisible by rememberSaveable { mutableStateOf(false) }
+    // Недоступные пресеты по умолчанию не показываем: 8 из 18 строк ничего не давали,
+    // кроме «отключён: …». Причина остаётся доступной по кнопке «Показать недоступные».
+    val available = presets.filter { preset -> preset.enabledByDefault }
+    val unavailable = presets.filter { preset -> !preset.enabledByDefault }
+    var showUnavailable by rememberSaveable { mutableStateOf(false) }
+    val selectedCount = available.count { preset ->
         preset.id in selectedPresetIds
     }
-    val allSelected = presets.isNotEmpty() && selectedCount == presets.size
+    val allSelected = available.isNotEmpty() && selectedCount == available.size
     val selectedPreset = if (selectedCount == 1) {
-        presets.firstOrNull { preset ->
+        available.firstOrNull { preset ->
             preset.id in selectedPresetIds
         }
     } else {
         null
     }
     val selectionSummary = when {
-        presets.isEmpty() -> "Нет доступных пресетов"
+        available.isEmpty() -> "Нет доступных пресетов"
         selectedCount == 0 -> "Рекомендуемый DNS"
         selectedPreset != null -> selectedPreset.title
-        else -> "Сравнение: выбрано $selectedCount из ${presets.size}"
+        else -> "Сравнение: выбрано $selectedCount из ${available.size}"
     }
     val arrowRotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
@@ -1270,13 +1310,13 @@ private fun PresetsPanel(
                     }
                     TextButton(
                         onClick = onSelectAll,
-                        enabled = presets.isNotEmpty() && !allSelected,
+                        enabled = available.isNotEmpty() && !allSelected,
                     ) {
                         Text("Сравнить все")
                     }
                 }
 
-                if (presets.isEmpty()) {
+                if (available.isEmpty()) {
                     Text(
                         text = "Пресеты пока недоступны",
                         modifier = Modifier.padding(
@@ -1287,7 +1327,7 @@ private fun PresetsPanel(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    presets.forEach { preset ->
+                    available.forEach { preset ->
                         key(preset.id) {
                             PresetRow(
                                 preset = preset,
@@ -1295,13 +1335,117 @@ private fun PresetsPanel(
                                 onCheckedChange = { checked ->
                                     onPresetChecked(preset.id, checked)
                                 },
+                                onDelete = if (preset.isCustom) {
+                                    { onDeleteCustomPreset(preset.id) }
+                                } else {
+                                    null
+                                },
                             )
                         }
                     }
                 }
+
+                if (unavailable.isNotEmpty()) {
+                    TextButton(
+                        onClick = { showUnavailable = !showUnavailable },
+                        modifier = Modifier.padding(start = 4.dp),
+                    ) {
+                        Text(
+                            if (showUnavailable) {
+                                "Скрыть недоступные (${unavailable.size})"
+                            } else {
+                                "Показать недоступные (${unavailable.size})"
+                            },
+                        )
+                    }
+                    if (showUnavailable) {
+                        unavailable.forEach { preset ->
+                            key(preset.id) {
+                                PresetRow(
+                                    preset = preset,
+                                    checked = false,
+                                    onCheckedChange = {},
+                                )
+                            }
+                        }
+                    }
+                }
+
+                TextButton(
+                    onClick = { addDialogVisible = true },
+                    modifier = Modifier.padding(start = 4.dp),
+                ) {
+                    Text("Добавить свой DNS")
+                }
             }
         }
     }
+
+    if (addDialogVisible) {
+        AddPresetDialog(
+            onDismiss = { addDialogVisible = false },
+            onConfirm = { title, address, dotHost ->
+                onAddCustomPreset(title, address, dotHost)
+                addDialogVisible = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun AddPresetDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (title: String, address: String, dotHost: String?) -> Unit,
+) {
+    var title by rememberSaveable { mutableStateOf("") }
+    var address by rememberSaveable { mutableStateOf("") }
+    var dotHost by rememberSaveable { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Свой DNS-провайдер") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Название") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = address,
+                    onValueChange = { address = it },
+                    label = { Text("Адрес DNS") },
+                    placeholder = { Text("dns.example.com или 1.2.3.4") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = dotHost,
+                    onValueChange = { dotHost = it },
+                    label = { Text("DoT-хост (необязательно)") },
+                    supportingText = {
+                        Text("Если провайдер даёт отдельный адрес для DNS-over-TLS")
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = title.isNotBlank() && address.isNotBlank(),
+                onClick = { onConfirm(title, address, dotHost) },
+            ) {
+                Text("Добавить")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Отмена")
+            }
+        },
+    )
 }
 
 @Composable
@@ -1310,6 +1454,7 @@ private fun PresetRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    onDelete: (() -> Unit)? = null,
 ) {
     // Отключённый пресет виден в списке, но выбрать его нельзя — и с причиной отказа.
     val disabled = !preset.enabledByDefault
@@ -1352,6 +1497,11 @@ private fun PresetRow(
             Text(
                 text = if (disabled && preset.disabledReason != null) {
                     "отключён: ${preset.disabledReason}"
+                } else if (preset.isCustom) {
+                    buildString {
+                        append("свой • ")
+                        append(preset.dotHost ?: preset.primaryDns)
+                    }
                 } else {
                     buildString {
                         append(preset.dotHost ?: preset.primaryDns)
@@ -1362,6 +1512,20 @@ private fun PresetRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        if (onDelete != null) {
+            // Удалять можно только свои пресеты: встроенные живут в коде и обновляются с версией.
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Удалить свой DNS",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
     }
 }
