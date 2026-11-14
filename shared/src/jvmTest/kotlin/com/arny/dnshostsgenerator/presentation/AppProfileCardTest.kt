@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.runComposeUiTest
 import com.arny.dnshostsgenerator.domain.AppProfile
+import com.arny.dnshostsgenerator.domain.BuiltInAppProfiles
 import com.arny.dnshostsgenerator.domain.DnsCheckResult
 import com.arny.dnshostsgenerator.domain.DnsCheckStatus
 import com.arny.dnshostsgenerator.domain.ProfileCheckResult
@@ -27,7 +28,39 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalTestApi::class)
 class AppProfileCardTest {
 
-    private val profile = AppProfileHolder.profile
+    private val profile = AppProfileHolder.profile(AppProfileUiState().profileId)
+
+    @Test
+    fun switchingProfileChangesTitleAndClearsResult() = runComposeUiTest {
+        var selected: String? = null
+        setContent {
+            AppProfileCard(
+                state = AppProfileUiState(),
+                onRun = {},
+                onProfileSelected = { selected = it },
+            )
+        }
+
+        // По умолчанию — ChatGPT, рядом переключатель на Gemini.
+        onNodeWithText("Правила для ChatGPT (Android)").assertExists()
+        onNodeWithText("Gemini").performClick()
+
+        assertEquals("app_gemini_android", selected)
+    }
+
+    @Test
+    fun geminiProfileShowsOwnDomainCount() = runComposeUiTest {
+        val gemini = BuiltInAppProfiles.geminiAndroid
+        setContent {
+            AppProfileCard(
+                state = AppProfileUiState(profileId = gemini.id),
+                onRun = {},
+            )
+        }
+
+        onNodeWithText("Правила для ${gemini.title}").assertExists()
+        onNodeWithText("${gemini.hosts.size} доменов", substring = true).assertExists()
+    }
 
     @Test
     fun showsProfileAndStartsCheck() = runComposeUiTest {

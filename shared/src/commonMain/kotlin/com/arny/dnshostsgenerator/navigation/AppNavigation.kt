@@ -35,6 +35,7 @@ fun AppNavigation(
     onNextDnsImportEvent: (NextDnsImportEvent) -> Unit,
     appProfileState: AppProfileUiState,
     onAppProfileCheck: () -> Unit,
+    onAppProfileSelected: (String) -> Unit = {},
     dnsCheckState: DnsCheckUiState,
     onDnsCheckDomainChanged: (String) -> Unit,
     onDnsCheckRun: () -> Unit,
@@ -67,7 +68,11 @@ fun AppNavigation(
                 },
                 dnsCheck = {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        AppProfileCard(state = appProfileState, onRun = onAppProfileCheck)
+                        AppProfileCard(
+                            state = appProfileState,
+                            onRun = onAppProfileCheck,
+                            onProfileSelected = onAppProfileSelected,
+                        )
                         DnsCheckCard(
                             state = dnsCheckState,
                             onDomainChanged = onDnsCheckDomainChanged,

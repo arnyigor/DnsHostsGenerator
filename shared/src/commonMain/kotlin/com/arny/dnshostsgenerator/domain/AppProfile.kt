@@ -49,5 +49,45 @@ object BuiltInAppProfiles {
         ),
     )
 
-    val all: List<AppProfile> = listOf(chatGptAndroid)
+    /**
+     * Домены Gemini в браузере и в приложении.
+     *
+     * Проверено 14.11.2026 на телефоне и с ПК: все адреса ниже обслуживает один и тот же
+     * прокси-адрес `dns.dns-ai.ru` (181.215.40.49) — 200/302/404 на каждый хост. Поэтому
+     * для Gemini схема «один адрес на все домены» работает, в отличие от ChatGPT,
+     * где адреса у провайдера разные.
+     */
+    val geminiAndroid: AppProfile = AppProfile(
+        id = "app_gemini_android",
+        title = "Gemini (Android)",
+        hosts = listOf(
+            // Основной интерфейс и AI Studio.
+            "gemini.google.com",
+            "aistudio.google.com",
+            "makersuite.google.com",
+            "bard.google.com",
+            // API генеративного языка.
+            "generativelanguage.googleapis.com",
+            "aisandbox-pa.googleapis.com",
+            "assistant-s3-pa.googleapis.com",
+            "proactivebackend-pa.googleapis.com",
+            "robinfrontend-pa.googleapis.com",
+            // Служебные каналы страницы Gemini (websockets и телеметрия запросов).
+            "alkalicore-pa.clients6.google.com",
+            "alkalimakersuite-pa.clients6.google.com",
+            "webchannel-alkalimakersuite-pa.clients6.google.com",
+            "people-pa.clients6.google.com",
+            "signaler-pa.clients6.google.com",
+            "waa-pa.clients6.google.com",
+            // Соседние продукты Google AI, которые открываются из того же меню.
+            "deepmind.google",
+            "jules.google.com",
+            "notebooklm.google.com",
+            "labs.google",
+        ),
+    )
+
+    val all: List<AppProfile> = listOf(chatGptAndroid, geminiAndroid)
+
+    fun byId(id: String?): AppProfile = all.firstOrNull { it.id == id } ?: chatGptAndroid
 }

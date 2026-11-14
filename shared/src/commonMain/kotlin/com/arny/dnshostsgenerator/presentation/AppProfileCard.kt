@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -39,10 +40,13 @@ import kotlinx.coroutines.launch
 
 /** Профиль приложения, для которого подбирается адрес (пока один — ChatGPT). */
 object AppProfileHolder {
-    val profile: AppProfile = BuiltInAppProfiles.chatGptAndroid
+    /** Профиль по id; неизвестный id даёт профиль ChatGPT. */
+    fun profile(id: String?): AppProfile = BuiltInAppProfiles.byId(id)
 }
 
 data class AppProfileUiState(
+    /** Какой набор доменов выбран в карточке: ChatGPT или Gemini. */
+    val profileId: String = BuiltInAppProfiles.chatGptAndroid.id,
     val isRunning: Boolean = false,
     val result: ProfileCheckResult? = null,
     val progressText: String = "Один адрес для всех доменов приложения",
@@ -56,12 +60,14 @@ data class AppProfileUiState(
 fun AppProfileCard(
     state: AppProfileUiState,
     onRun: () -> Unit,
+    onProfileSelected: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val profile = AppProfileHolder.profile(state.profileId)
     val clipboardManager = LocalClipboardManager.current
     val snackbarHostState = LocalSnackbarHostState.current
     val scope = rememberCoroutineScope()
-    val rules = state.result?.ip?.let { buildPersonalDnsFilterRules(AppProfileHolder.profile, it) }
+    val rules = state.result?.ip?.let { buildPersonalDnsFilterRules(profile, it) }
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -81,9 +87,9 @@ fun AppProfileCard(
                 )
                 Spacer(Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Правила для ${AppProfileHolder.profile.title}", style = MaterialTheme.typography.titleMedium)
+                    Text("Правила для ${profile.title}", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "${AppProfileHolder.profile.hosts.size} доменов · подбирается один адрес на все",
+                        "${profile.hosts.size} доменов · подбирается один адрес на все",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -124,6 +130,20 @@ fun AppProfileCard(
                         contentDescription = "Поделиться правилами",
                         modifier = Modifier.size(18.dp),
                     )
+                }
+            }
+
+            if (BuiltInAppProfiles.all.size > 1) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    BuiltInAppProfiles.all.forEach { item ->
+                        val selected = item.id == profile.id
+                        FilterChip(
+                            selected = selected,
+                            onClick = { onProfileSelected(item.id) },
+                            enabled = !state.isRunning,
+                            label = { Text(item.title.substringBefore(" (")) },
+                        )
+                    }
                 }
             }
 

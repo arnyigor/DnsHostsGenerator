@@ -129,6 +129,9 @@ sealed interface HostsGeneratorEvent {
     data class OnDnsCheckDomainChanged(val domain: String) : HostsGeneratorEvent
     /** Подбор адреса для профиля приложения на выбранном пресете. */
     object OnAppProfileCheck : HostsGeneratorEvent
+
+    /** Переключение набора доменов в карточке правил: ChatGPT или Gemini. */
+    data class OnAppProfileSelected(val profileId: String) : HostsGeneratorEvent
     object OnDnsCheck : HostsGeneratorEvent
     object OnDnsCheckCancel : HostsGeneratorEvent
     object OnGenerate : HostsGeneratorEvent
@@ -206,6 +209,18 @@ class HostsGeneratorViewModel(
                 it.copy(selectedPresetIds = emptySet())
             }
 
+            is HostsGeneratorEvent.OnAppProfileSelected -> _state.update {
+                // Результат прошлого профиля к новому не относится: иначе можно скопировать
+                // правила ChatGPT, думая, что это Gemini.
+                it.copy(
+                    appProfile = it.appProfile.copy(
+                        profileId = event.profileId,
+                        result = null,
+                        progressText = "Один адрес для всех доменов приложения",
+                    ),
+                )
+            }
+
             is HostsGeneratorEvent.OnAddCustomPreset -> addCustomPreset(event)
             is HostsGeneratorEvent.OnDeleteCustomPreset -> deleteCustomPreset(event.id)
 
@@ -257,7 +272,7 @@ class HostsGeneratorViewModel(
             }
             return
         }
-        val profile = AppProfileHolder.profile
+        val profile = AppProfileHolder.profile(_state.value.appProfile.profileId)
         appProfileJob?.cancel()
         _state.update {
             it.copy(

@@ -16,12 +16,19 @@ class DotPinnedIpLiveTest {
     @Test
     fun pinnedIpIsUsedForDot() = runTest {
         val resolver = createDnsResolver()
-        val ips = resolver.resolveA(
-            domain = "chatgpt.com",
-            dnsServer = "91.108.243.78",
-            timeoutMillis = 8_000,
-            options = DnsQueryOptions(dotHost = "dns.bezmezhau.com", allowPlainFallback = false),
-        )
+        // Провайдер иногда обрывает соединение под нагрузкой: 2-3 попытки, иначе тест
+        // краснеет из-за сети, а не из-за кода.
+        var ips = emptyList<String>()
+        for (attempt in 1..3) {
+            ips = resolver.resolveA(
+                domain = "chatgpt.com",
+                dnsServer = "91.108.243.78",
+                timeoutMillis = 8_000,
+                options = DnsQueryOptions(dotHost = "dns.bezmezhau.com", allowPlainFallback = false),
+            )
+            if (ips.isNotEmpty()) break
+            println("попытка $attempt: пусто")
+        }
         println("DoT с закреплённым IP вернул: $ips")
         assertTrue(ips.isNotEmpty(), "DoT по IP пресета должен вернуть адреса")
     }
