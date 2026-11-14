@@ -45,6 +45,8 @@ class HostsGenerator(
         val checkIps: List<String>,
         /** Адрес, который пойдёт в hosts: подтверждённый TLS-проверкой либо первый из ответа. */
         val selectedIp: String? = null,
+        /** Пресет из цепочки, который дал рабочий адрес (только в режиме мержа). */
+        val sourcePreset: String? = null,
     )
 
     suspend fun generate(
@@ -248,6 +250,9 @@ class HostsGenerator(
     }
 
     private suspend fun lookup(domain: String, request: GenerateHostsRequest): DomainLookup {
+        if (request.presetChain.isNotEmpty()) {
+            return lookupAcrossPresets(domain, request)
+        }
         val primaryIps = resolveSafely(
             domain = domain,
             dnsServer = request.primaryDns,
@@ -277,6 +282,56 @@ class HostsGenerator(
             checkIps = checkIps,
             selectedIp = selectWorkingIp(domain, primaryIps, checkIps, request),
         )
+    }
+
+    /**
+     * Мерж: для домена перебираются пресеты по порядку, берётся первый рабочий адрес.
+     *
+     * Один провайдер редко обслуживает всё приложение: 14.11.2026 ChatGPT работал через
+     * bezmezhau, Gemini — через другой пресет, а перекрёстно они отдавали мёртвые адреса.
+     * Поэтому hosts собирается по доменам, а не по одному серверу на весь файл.
+     */
+    private suspend fun lookupAcrossPresets(domain: String, request: GenerateHostsRequest): DomainLookup {
+        var last: DomainLookup? = null
+        for (preset in request.presetChain) {
+            val primaryIps = resolveSafely(
+                domain = domain,
+                dnsServer = preset.primaryDns,
+                timeoutMillis = request.timeoutMillis,
+                options = DnsQueryOptions(
+                    dotHost = preset.dotHost,
+                    allowInvalidTls = preset.allowInvalidTls,
+                ),
+                failureMessage = "Primary DNS resolve failed (${preset.title})",
+            )
+            if (primaryIps.isEmpty()) continue
+
+            val checkIps = resolveSafely(
+                domain = domain,
+                dnsServer = request.checkDns,
+                timeoutMillis = request.timeoutMillis,
+                options = DnsQueryOptions(
+                    dotHost = request.checkDotHost,
+                    allowInvalidTls = request.checkAllowInvalidTls,
+                ),
+                failureMessage = "Check DNS resolve failed, domain will be treated as resolved",
+            )
+            val lookup = DomainLookup(
+                primaryIps = primaryIps,
+                checkIps = checkIps,
+                selectedIp = selectWorkingIp(domain, primaryIps, checkIps, request),
+                sourcePreset = preset.title,
+            )
+            // 0.0.0.0 от одного пресета не повод сдаться: другой может отдать рабочий адрес.
+            val usable = lookup.selectedIp != null &&
+                !primaryIps.all { it in nullRouteAddresses }
+            if (usable) {
+                AppLogger.d("Merged pick: domain=$domain, preset=${preset.title}, ip=${lookup.selectedIp}")
+                return lookup
+            }
+            last = lookup
+        }
+        return last ?: DomainLookup(primaryIps = emptyList(), checkIps = emptyList())
     }
 
     /**

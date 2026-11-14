@@ -707,6 +707,54 @@ class HostsGeneratorViewModel(
             val inputLines = HostsParser.normalizeToDomainLines(currentState.domainText)
 
             try {
+                // Несколько пресетов = мерж в один файл: у каждого домена берётся первый
+                // рабочий адрес. Раньше получался отдельный файл на пресет, и домены,
+                // которые этот сервер не обслуживает, оставались пустыми — приходилось
+                // вручную сводить несколько файлов.
+                if (presets.size > 1) {
+                    val mergedTitle = "Мерж: " + presets.joinToString(" + ") { it.title }
+                    val merged = generator.generate(
+                        presetTitle = mergedTitle,
+                        request = GenerateHostsRequest(
+                            primaryDns = presets.first().primaryDns,
+                            primaryDotHost = presets.first().dotHost,
+                            primaryAllowInvalidTls = presets.first().allowInvalidTls,
+                            checkDns = presets.first().checkDns,
+                            inputLines = inputLines,
+                            outputFileName = "hosts_merged.txt",
+                            dedupEnabled = currentState.dedupEnabled,
+                            presetChain = presets,
+                        ),
+                    ) { progress ->
+                        val fraction = if (progress.totalLines > 0) {
+                            progress.processedLines.toFloat() / progress.totalLines
+                        } else {
+                            0f
+                        }
+                        _state.update {
+                            it.copy(
+                                progress = fraction,
+                                progressText = buildString {
+                                    append("мерж · ${progress.processedLines}/${progress.totalLines}")
+                                    progress.currentDomain?.let { domain ->
+                                        append(" — ").append(domain)
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    generatedResults += merged
+                    _state.update {
+                        it.copy(
+                            results = generatedResults.toList(),
+                            selectedResultIndex = 0,
+                            statusText = "Мерж готов: ${merged.stats.resolvedCount} доменов через " +
+                                presets.size + " пресетов",
+                        )
+                    }
+                    return@launch
+                }
+
                 presets.forEachIndexed { index, preset ->
                     val result = try {
                         generator.generate(

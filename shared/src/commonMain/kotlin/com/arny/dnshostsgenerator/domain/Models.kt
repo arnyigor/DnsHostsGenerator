@@ -87,6 +87,11 @@ data class GenerateHostsRequest(
     val inputLines: List<String>,
     val outputFileName: String,
     val dedupEnabled: Boolean,
+    /**
+     * Мерж: если список непустой, каждый домен ищется по пресетам по порядку и берётся
+     * первый рабочий адрес. Тогда [primaryDns] и [primaryDotHost] игнорируются.
+     */
+    val presetChain: List<com.arny.dnshostsgenerator.domain.DnsProviderPreset> = emptyList(),
     val recordType: DnsRecordType = DnsRecordType.A,
     val ipSelectionStrategy: IpSelectionStrategy = IpSelectionStrategy.First,
     val preserveComments: Boolean = true,
