@@ -19,6 +19,7 @@ import com.arny.dnshostsgenerator.domain.DnsPresetUnusableException
 import com.arny.dnshostsgenerator.domain.DnsProviderPreset
 import com.arny.dnshostsgenerator.domain.GenerateHostsRequest
 import com.arny.dnshostsgenerator.domain.GenerationResult
+import com.arny.dnshostsgenerator.domain.ProfileCheckResult
 import com.arny.dnshostsgenerator.domain.ProfileChecker
 import com.arny.dnshostsgenerator.generator.HostsGenerator
 import com.arny.dnshostsgenerator.logging.AppLogger
@@ -245,35 +246,70 @@ class HostsGeneratorViewModel(
      * поэтому смешивать серверы нельзя.
      */
     private fun runAppProfileCheck() {
-        val preset = _state.value.selectedPresets.firstOrNull()
-        if (preset == null) {
+        // Раньше брался только первый выбранный пресет. Если он лежит (так было с comss.one
+        // 14.11.2026), подбор молча упирался в «рабочий адрес не найден», хотя остальные
+        // пресеты рабочие. Теперь перебираем выбранные по порядку и сообщаем, что именно
+        // отказало у каждого.
+        val presetsToTry = _state.value.selectedPresets
+        if (presetsToTry.isEmpty()) {
             _state.update {
                 it.copy(appProfile = it.appProfile.copy(progressText = "Сначала выберите DNS-пресет"))
             }
             return
         }
+        val profile = AppProfileHolder.profile
         appProfileJob?.cancel()
         _state.update {
             it.copy(
                 appProfile = it.appProfile.copy(
                     isRunning = true,
                     result = null,
-                    progressText = "Проверяю ${AppProfileHolder.profile.title} через ${preset.title}…",
+                    progressText = "Проверяю ${profile.title} через ${presetsToTry.first().title}…",
                 ),
             )
         }
         appProfileJob = viewModelScope.launch {
             try {
-                val result = profileChecker.check(AppProfileHolder.profile, preset)
+                val failures = mutableListOf<String>()
+                var result: ProfileCheckResult? = null
+                for (preset in presetsToTry) {
+                    _state.update {
+                        it.copy(
+                            appProfile = it.appProfile.copy(
+                                progressText = "Проверяю ${profile.title} через ${preset.title}…",
+                            ),
+                        )
+                    }
+                    val attempt = try {
+                        profileChecker.check(profile, preset)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        AppLogger.e("App profile check failed: preset=${preset.title}", error)
+                        failures += "${preset.title}: ${error.message ?: error::class.simpleName}"
+                        continue
+                    }
+                    AppLogger.d(
+                        "App profile check: preset=${preset.title}, usable=${attempt.isUsable}, " +
+                            "ip=${attempt.ip}, detail=${attempt.detail}",
+                    )
+                    if (attempt.isUsable) {
+                        result = attempt
+                        break
+                    }
+                    failures += "${preset.title}: ${attempt.detail.orEmpty().take(80)}"
+                }
+                val found = result
+                val detail = failures.joinToString("; ").take(200)
                 _state.update {
                     it.copy(
                         appProfile = it.appProfile.copy(
                             isRunning = false,
-                            result = result,
-                            progressText = if (result.isUsable) {
-                                "Адрес ${result.ip} подходит: ${result.hostChecks.size} доменов проверено"
+                            result = found,
+                            progressText = if (found != null) {
+                                "Адрес ${found.ip} подходит: ${found.hostChecks.size} доменов проверено"
                             } else {
-                                "Рабочий адрес не найден: ${result.detail.orEmpty().take(120)}"
+                                "Рабочий адрес не найден: $detail"
                             },
                         ),
                     )

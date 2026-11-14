@@ -68,7 +68,17 @@ private class DnsJavaResolver : DnsResolver {
         // primary и check-резолверы возвращают одинаковые IP и всё уходит в #forwarded.
         val dotHost = options.dotHost ?: dnsServer
         val dotResult = runCatching {
-            resolveADot(domain, dotHost, timeoutMillis, options.allowInvalidTls)
+            // Если в пресете задан IP (primaryDns), подключаемся именно к нему: имя
+            // DoT-сервера может разрешаться в чужой/мёртвый адрес. Сертификат всё равно
+            // проверяется по dotHost. Проверено 14.11.2026: dns.bezmezhau.com резолвится
+            // в 143.20.64.55, который не принимает TCP:853, а 91.108.243.78 отвечает.
+            resolveADot(
+                domain = domain,
+                dotHost = dotHost,
+                pinnedIp = dnsServer.takeIf { isIpLiteral(it) },
+                timeoutMillis = timeoutMillis,
+                allowInvalidTls = options.allowInvalidTls,
+            )
         }.onFailure { error ->
             AppLogger.e(
                 "DoT query failed, falling back to plain UDP: domain=$domain, dotHost=$dotHost, " +
@@ -93,6 +103,7 @@ private class DnsJavaResolver : DnsResolver {
     private suspend fun resolveADot(
         domain: String,
         dotHost: String,
+        pinnedIp: String?,
         timeoutMillis: Int,
         allowInvalidTls: Boolean,
     ): List<String> = withContext(Dispatchers.IO) {
@@ -104,7 +115,7 @@ private class DnsJavaResolver : DnsResolver {
         // коннектится без таймаута, а InetSocketAddress берёт только первый адрес — если он
         // заблокирован, рабочий DoT-сервер считается мёртвым (проверено 31.10.2026:
         // eu.geohide.ru → 143.20.64.192 не отвечает на 853, другие его адреса отвечают).
-        val raw = connectAnyAddress(dotHost, DOT_PORT, timeoutMillis)
+        val raw = connectAnyAddress(pinnedIp ?: dotHost, DOT_PORT, timeoutMillis)
         val socket = socketFactory(allowInvalidTls)
             .createSocket(raw, dotHost, DOT_PORT, true) as SSLSocket
         try {
@@ -182,6 +193,14 @@ private class DnsJavaResolver : DnsResolver {
             }.socketFactory
         }
     }
+
+    /** IPv4/IPv6-литерал: такой адрес нельзя резолвить, к нему подключаются напрямую. */
+    private fun isIpLiteral(host: String): Boolean {
+        val value = host.trim().removeSurrounding("[", "]")
+        return value.contains(':') || IPV4.matches(value)
+    }
+
+    private val IPV4 = Regex("""^\d{1,3}(\.\d{1,3}){3}$""")
 
     /**
      * Подключается к первому адресу имени, который принял соединение.

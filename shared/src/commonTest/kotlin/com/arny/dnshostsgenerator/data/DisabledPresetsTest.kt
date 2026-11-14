@@ -20,10 +20,17 @@ class DisabledPresetsTest {
         // либо отдают недостижимые адреса: geohide, malw.link, pro.shecan.ir (+ xbox-dns.ru).
         assertEquals(
             listOf(
+                // 14.11.2026: DoT на 83.220.169.155 обрывается EOF, подбор адреса не проходит.
+                "dns_comss_one",
                 "dns_geohide_ru",
                 "dns_us_geohide_ru",
                 "dns_malw_link",
                 "pro_shecan_ir",
+                // 08.11.2026: DoT не отвечает, адрес из DoH не открывает TCP:443.
+                "dns_zapret_moe",
+                // 08.11.2026 по сводке 4PDA (пост 145952319): DoH недоступен / адрес недостижим.
+                "api_magicdns_ru",
+                "dns_dagami_ru",
                 "xbox_dns_ru",
             ),
             disabled.map { it.id },
@@ -38,6 +45,8 @@ class DisabledPresetsTest {
 
     @Test
     fun otherPresetsStayEnabled() {
+        // Проверено 08.11.2026 живым DoT-запросом (dnsjava): dns.dns-ai.ru -> 62.60.230.61,
+        // dns.geodema.love -> 179.236.130.11, dns.keyoneday.ru -> 2.58.127.63.
         val enabled = BuiltInDnsPresets.defaults.filter { it.enabledByDefault }.map { it.id }
 
         // Удалять рабочие пресеты нельзя: все остальные остаются включёнными.
@@ -48,12 +57,14 @@ class DisabledPresetsTest {
             listOf(
                 "dns_bezmezhau_com",
                 "dns_astracat_ru",
-                "dns_comss_one",
                 "dns_eu_geohide_ru",
                 "dns_mafioznik_xyz",
                 "free_shecan_ir",
-                "dns_zapret_moe",
                 "dns_wlrus_cfd",
+                // 08.11.2026: DoT отвечает валидным сертификатом и отдаёт прокси-адреса.
+                "dns_dns_ai_ru",
+                "dns_geodema_love",
+                "dns_keyoneday_ru",
             ),
             enabled,
         )
@@ -66,6 +77,7 @@ class DisabledPresetsTest {
         assertTrue(state.selectedPresets.isEmpty())
 
         // Рекомендуемый пресет по умолчанию работает.
-        assertEquals(listOf("dns_comss_one"), HostsGeneratorState().selectedPresets.map { it.id })
+        // 14.11.2026: рекомендуемым стал bezmezhau — comss.one перестал отвечать по DoT.
+        assertEquals(listOf("dns_bezmezhau_com"), HostsGeneratorState().selectedPresets.map { it.id })
     }
 }

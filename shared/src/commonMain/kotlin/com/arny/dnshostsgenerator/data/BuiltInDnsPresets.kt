@@ -3,12 +3,15 @@ package com.arny.dnshostsgenerator.data
 import com.arny.dnshostsgenerator.domain.DnsProviderPreset
 
 object BuiltInDnsPresets {
-    const val RECOMMENDED_ID: String = "dns_comss_one"
+    // 14.11.2026: dns.comss.one перестал отвечать по DoT (EOF-обрыв на телефоне и отказ
+    // соединения с ПК), поэтому рекомендуемым стал bezmezhau: его адрес 31.58.216.201
+    // отвечает 200 на всех 13 доменах профиля ChatGPT.
+    const val RECOMMENDED_ID: String = "dns_bezmezhau_com"
 
     val defaults: List<DnsProviderPreset> = listOf(
         DnsProviderPreset(
             id = "dns_bezmezhau_com",
-            title = "dns.bezmezhau.com",
+            title = "dns.bezmezhau.com (рекомендуемый)",
             // 23.10.2026: DoT по имени периодически не поднимается (TCP:853 timeout),
             // а по IP 91.108.243.78 — отвечает и возвращает рабочий адрес (31.58.216.201).
             // Поэтому ходим на IP, а сертификат проверяем по имени (dotHost).
@@ -24,10 +27,15 @@ object BuiltInDnsPresets {
         ),
         DnsProviderPreset(
             id = "dns_comss_one",
-            title = "dns.comss.one (рекомендуемый)",
+            title = "dns.comss.one",
             primaryDns = "83.220.169.155",
             dotHost = "dns.comss.one",
             outputFileName = "host_out_dns.comss.one.txt",
+            // 14.11.2026: DoT на 83.220.169.155 обрывается EOF-ошибкой и на телефоне
+            // (logcat 22:43–22:54), и с ПК (connection refused). Пока адрес лежит, пресет
+            // не может ни разрешить домены, ни подобрать адрес профиля.
+            enabledByDefault = false,
+            disabledReason = "DoT не отвечает: EOF-обрыв и отказ соединения (проверено 14.11.2026)",
         ),
         DnsProviderPreset(
             id = "dns_geohide_ru",
@@ -96,6 +104,10 @@ object BuiltInDnsPresets {
             title = "dns.zapret.moe",
             primaryDns = "dns.zapret.moe",
             outputFileName = "host_out_dns.zapret.moe.txt",
+            enabledByDefault = false,
+            // 08.11.2026: DoT TCP:853 не отвечает (таймаут), публичную работу по DoT отключили
+            // с 03.11.2026; DoH отдаёт 5.129.221.64, который не открывает TCP:443.
+            disabledReason = "DoT не отвечает, адрес из DoH недостижим (проверено 08.11.2026)",
         ),
         DnsProviderPreset(
             id = "dns_wlrus_cfd",
@@ -106,6 +118,50 @@ object BuiltInDnsPresets {
             // по TLS для chatgpt.com, claude.ai, gemini.google.com и open.spotify.com.
             allowInvalidTls = true,
             outputFileName = "host_out_dns.wlrus.cfd.txt",
+        ),
+        // Ниже — пресеты из сводки 4PDA (пост 145952319, 08.11.2026).
+        // Живая проверка 08.11.2026 (DoH POST, TLS по SNI на 443):
+        //  dns-ai/geodema/keyoneday/comss отдают разные рабочие адреса на chatgpt/gemini;
+        //  dagami/wlrus/zapret отдали адрес, не открывающий TCP:443; magicdns/bezmezhau/eu.geohide — таймаут DoH.
+        DnsProviderPreset(
+            id = "dns_dns_ai_ru",
+            title = "dns.dns-ai.ru",
+            primaryDns = "dns.dns-ai.ru",
+            outputFileName = "host_out_dns.dns-ai.ru.txt",
+            // 08.11.2026 (DoT, dnsjava): chatgpt.com -> 62.60.230.61, gemini.google.com -> 109.120.131.200,
+            // сертификат DoT валиден (Let's Encrypt). До 17 доменов прокси может включать не все.
+        ),
+        DnsProviderPreset(
+            id = "dns_geodema_love",
+            title = "dns.geodema.love (бета)",
+            primaryDns = "dns.geodema.love",
+            outputFileName = "host_out_dns.geodema.love.txt",
+            // 08.11.2026: chatgpt.com -> 179.236.130.11 (TLS валиден), gemini -> настоящие адреса Google.
+        ),
+        DnsProviderPreset(
+            id = "dns_keyoneday_ru",
+            title = "dns.keyoneday.ru",
+            primaryDns = "dns.keyoneday.ru",
+            outputFileName = "host_out_dns.keyoneday.ru.txt",
+            // 08.11.2026: отдаёт один и тот же адрес 2.58.127.63 на всё; TLS валиден.
+        ),
+        DnsProviderPreset(
+            id = "api_magicdns_ru",
+            title = "api.magicdns.ru",
+            primaryDns = "api.magicdns.ru",
+            outputFileName = "host_out_api.magicdns.ru.txt",
+            enabledByDefault = false,
+            // 08.11.2026: DoH 109.120.177.170/45.86.65.181 — таймаут соединения.
+            disabledReason = "DoH-сервер не отвечает (проверено 08.11.2026)",
+        ),
+        DnsProviderPreset(
+            id = "dns_dagami_ru",
+            title = "dns.dagami.ru",
+            primaryDns = "dns.dagami.ru",
+            outputFileName = "host_out_dns.dagami.ru.txt",
+            enabledByDefault = false,
+            // 08.11.2026: адрес 31.76.52.235 не открывает TCP:443.
+            disabledReason = "отдаёт недостижимый адрес (проверено 08.11.2026)",
         ),
         DnsProviderPreset(
             id = "xbox_dns_ru",
