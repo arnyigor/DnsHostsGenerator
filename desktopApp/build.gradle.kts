@@ -22,7 +22,8 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
             packageName = "DnsHostsGenerator"
-            packageVersion = "1.4.1"
+            // Должно совпадать с androidApp: иначе в имени exe остаётся старая версия.
+            packageVersion = "1.5.1"
             includeAllModules = true
         }
     }
