@@ -123,6 +123,8 @@ sealed interface HostsGeneratorEvent {
         val title: String,
         val primaryDns: String,
         val dotHost: String?,
+        /** Срок действия адреса в epoch millis; null — бессрочно. */
+        val expiresAt: Long? = null,
     ) : HostsGeneratorEvent
 
     data class OnDeleteCustomPreset(val id: String) : HostsGeneratorEvent
@@ -436,6 +438,7 @@ class HostsGeneratorViewModel(
             checkDns = address,
             outputFileName = customPresetFileName(title, id),
             allowInvalidTls = false,
+            expiresAt = event.expiresAt,
         )
         viewModelScope.launch {
             runCatching { presetDao.upsert(entity) }

@@ -38,7 +38,7 @@ class CustomPresetUiTest {
     @OptIn(ExperimentalTestApi::class)
     private fun androidx.compose.ui.test.ComposeUiTest.renderScreen(
         presets: List<DnsProviderPreset> = listOf(builtIn, custom),
-        onAdd: (String, String, String?) -> Unit = { _, _, _ -> },
+        onAdd: (String, String, String?, Long?) -> Unit = { _, _, _, _ -> },
         onDelete: (String) -> Unit = {},
     ) {
         setContent {
@@ -86,7 +86,7 @@ class CustomPresetUiTest {
     @Test
     fun customPresetIsAddedFromDialog() = runComposeUiTest {
         var added: Triple<String, String, String?>? = null
-        renderScreen(onAdd = { t, a, d -> added = Triple(t, a, d) })
+        renderScreen(onAdd = { t, a, d, _ -> added = Triple(t, a, d) })
 
         onNodeWithText("DNS-провайдер").performClick()
         onNodeWithText("Добавить свой DNS").performClick()
@@ -104,7 +104,7 @@ class CustomPresetUiTest {
     @OptIn(ExperimentalTestApi::class)
     @Test
     fun addButtonIsDisabledWithoutTitle() = runComposeUiTest {
-        renderScreen(onAdd = { _, _, _ -> })
+        renderScreen(onAdd = { _, _, _, _ -> })
 
         onNodeWithText("DNS-провайдер").performClick()
         onNodeWithText("Добавить свой DNS").performClick()

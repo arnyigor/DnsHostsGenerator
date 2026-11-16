@@ -25,7 +25,16 @@ actual suspend fun updateSystemHosts(content: String): SaveFileResult = withCont
             }
             Files.writeString(tempPath, normalizedContent, StandardCharsets.UTF_8)
             Files.move(tempPath, hostsPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-            SaveFileResult(success = true, message = "Системный hosts обновлён: $hostsPath. Резервная копия: $backupPath")
+            // Запись файла — только половина дела: ОС и браузер держат старые ответы
+            // в кэше, и человек видит «применил, а не работает». Подсказка снята с
+            // практики 4PDA (пост 146034810) и оставлена короткой: длинную инструкцию
+            // никто не читает в тосте.
+            SaveFileResult(
+                success = true,
+                message = "Системный hosts обновлён: $hostsPath. Резервная копия: $backupPath. " +
+                    "Если изменения не видны — очистите кэш DNS: ipconfig /flushdns" +
+                    " (браузер Chrome/Edge: chrome://net-internals/#dns → Clear host cache).",
+            )
         } finally {
             Files.deleteIfExists(tempPath)
         }

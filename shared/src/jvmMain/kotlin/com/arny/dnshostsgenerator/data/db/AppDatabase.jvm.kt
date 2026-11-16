@@ -13,7 +13,7 @@ actual fun createAppDatabase(): AppDatabase {
         name = dbFile.absolutePath,
     )
         .addCallback(SeedCallback(seedStatements))
-        .addMigrations(MIGRATION_1_2)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
         .setDriver(BundledSQLiteDriver())
         .setQueryCoroutineContext(Dispatchers.IO)
         .build()

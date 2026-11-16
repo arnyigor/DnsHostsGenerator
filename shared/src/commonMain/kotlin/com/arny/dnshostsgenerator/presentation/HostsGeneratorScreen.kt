@@ -95,6 +95,7 @@ import com.arny.dnshostsgenerator.domain.ExportFormat
 import com.arny.dnshostsgenerator.domain.GenerationResult
 import com.arny.dnshostsgenerator.domain.exportFileName
 import com.arny.dnshostsgenerator.domain.exportText
+import com.arny.dnshostsgenerator.data.currentEpochMillis
 import com.arny.dnshostsgenerator.platform.canUpdateSystemHosts
 import com.arny.dnshostsgenerator.platform.pickArchive
 import com.arny.dnshostsgenerator.presentation.theme.AppTheme
@@ -146,8 +147,15 @@ fun HostsGeneratorScreen(
             onEvent(HostsGeneratorEvent.OnTextCopied)
         },
         onSaveTextFile = { fileName, content -> onEvent(HostsGeneratorEvent.OnSaveTextFile(fileName, content)) },
-        onAddCustomPreset = { title, address, dotHost ->
-            onEvent(HostsGeneratorEvent.OnAddCustomPreset(title, address, dotHost))
+        onAddCustomPreset = { title, address, dotHost, days ->
+            onEvent(
+                HostsGeneratorEvent.OnAddCustomPreset(
+                    title = title,
+                    primaryDns = address,
+                    dotHost = dotHost,
+                    expiresAt = days?.let { currentEpochMillis() + it * 24L * 60L * 60L * 1000L },
+                ),
+            )
         },
         onDeleteCustomPreset = { onEvent(HostsGeneratorEvent.OnDeleteCustomPreset(it)) },
         onUpdateSystemHosts = { content -> onEvent(HostsGeneratorEvent.OnUpdateSystemHosts(content)) },
@@ -191,8 +199,8 @@ fun HostsGeneratorScreen(
     onCopyText: (String) -> Unit,
     onSaveTextFile: (String, String) -> Unit,
     onUpdateSystemHosts: (String) -> Unit = {},
-    /** Свой DNS-провайдер: название, адрес, DoT-хост (может быть пустым). */
-    onAddCustomPreset: (String, String, String?) -> Unit = { _, _, _ -> },
+    /** Свой DNS-провайдер: название, адрес, DoT-хост, срок действия в днях (null — бессрочно). */
+    onAddCustomPreset: (String, String, String?, Long?) -> Unit = { _, _, _, _ -> },
     onDeleteCustomPreset: (String) -> Unit = {},
     /**
      * Встроенный блок импорта в NextDNS (телефон). Если задан, кнопка перехода
@@ -365,7 +373,7 @@ private fun ControlsPanel(
     onDeleteDomain: (Long) -> Unit,
     onGenerate: () -> Unit,
     onCancelGeneration: () -> Unit,
-    onAddCustomPreset: (String, String, String?) -> Unit,
+    onAddCustomPreset: (String, String, String?, Long?) -> Unit,
     onDeleteCustomPreset: (String) -> Unit,
     extraContent: (@Composable () -> Unit)?,
     compact: Boolean,
@@ -1217,7 +1225,7 @@ private fun PresetsPanel(
     onPresetChecked: (String, Boolean) -> Unit,
     onSelectRecommended: () -> Unit,
     onSelectAll: () -> Unit,
-    onAddCustomPreset: (String, String, String?) -> Unit = { _, _, _ -> },
+    onAddCustomPreset: (String, String, String?, Long?) -> Unit = { _, _, _, _ -> },
     onDeleteCustomPreset: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -1384,8 +1392,8 @@ private fun PresetsPanel(
     if (addDialogVisible) {
         AddPresetDialog(
             onDismiss = { addDialogVisible = false },
-            onConfirm = { title, address, dotHost ->
-                onAddCustomPreset(title, address, dotHost)
+            onConfirm = { title, address, dotHost, days ->
+                onAddCustomPreset(title, address, dotHost, days)
                 addDialogVisible = false
             },
         )
@@ -1395,11 +1403,12 @@ private fun PresetsPanel(
 @Composable
 private fun AddPresetDialog(
     onDismiss: () -> Unit,
-    onConfirm: (title: String, address: String, dotHost: String?) -> Unit,
+    onConfirm: (title: String, address: String, dotHost: String?, days: Long?) -> Unit,
 ) {
     var title by rememberSaveable { mutableStateOf("") }
     var address by rememberSaveable { mutableStateOf("") }
     var dotHost by rememberSaveable { mutableStateOf("") }
+    var expiresDays by rememberSaveable { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Свой DNS-провайдер") },
@@ -1430,12 +1439,25 @@ private fun AddPresetDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                OutlinedTextField(
+                    value = expiresDays,
+                    onValueChange = { input -> expiresDays = input.filter { it.isDigit() }.take(3) },
+                    label = { Text("Действует, дней (необязательно)") },
+                    isError = expiresDays.toLongOrNull()?.let { it <= 0 } == true,
+                    supportingText = {
+                        // Персональные эндпоинты выдают токен на срок: без напоминания
+                        // протухший адрес выглядел бы как «провайдер сломался».
+                        Text("Персональные эндпоинты часто требуют продления")
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         },
         confirmButton = {
             TextButton(
                 enabled = title.isNotBlank() && address.isNotBlank(),
-                onClick = { onConfirm(title, address, dotHost) },
+                onClick = { onConfirm(title, address, dotHost, expiresDays.toLongOrNull()?.takeIf { it > 0 }) },
             ) {
                 Text("Добавить")
             }
@@ -1700,6 +1722,15 @@ private fun ResultActions(
                 Text(
                     "Текущий hosts будет заменён с созданием резервной копии рядом с файлом. " +
                         "Для записи может потребоваться запуск от имени администратора/root.",
+                )
+                Spacer(Modifier.height(8.dp))
+                // Кэш DNS держит старые ответы: без этого шага «применил, а не работает».
+                Text(
+                    "После записи очистите кэш DNS, иначе изменения не видны: " +
+                        "в Windows — ipconfig /flushdns, в Chrome/Edge — " +
+                        "chrome://net-internals/#dns → Clear host cache.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             },
             confirmButton = {

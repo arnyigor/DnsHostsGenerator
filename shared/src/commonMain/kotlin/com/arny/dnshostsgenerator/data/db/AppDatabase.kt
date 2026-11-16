@@ -9,7 +9,7 @@ internal const val DATABASE_NAME = "dns_hosts_generator.db"
 
 @Database(
     entities = [GroupEntity::class, DomainEntity::class, CustomPresetEntity::class],
-    version = 2,
+    version = 3,
 )
 @ConstructedBy(AppDatabaseConstructor::class)
 abstract class AppDatabase : RoomDatabase() {

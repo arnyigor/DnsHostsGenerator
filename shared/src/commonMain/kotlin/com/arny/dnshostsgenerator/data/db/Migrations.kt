@@ -25,3 +25,14 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
         )
     }
 }
+
+/**
+ * v2 → v3: срок действия своего провайдера.
+ *
+ * У существующих записей срока нет — NULL значит «бессрочно», поведение не меняется.
+ */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(connection: SQLiteConnection) {
+        connection.execSQL("ALTER TABLE `custom_presets` ADD COLUMN `expiresAt` INTEGER")
+    }
+}
