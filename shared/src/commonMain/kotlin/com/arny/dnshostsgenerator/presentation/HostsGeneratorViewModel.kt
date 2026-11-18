@@ -88,6 +88,20 @@ data class HostsGeneratorState(
     /** Блок «Правила для приложения»: подбор одного адреса под все домены профиля. */
     val appProfile: AppProfileUiState = AppProfileUiState(),
 ) {
+    /**
+     * Серверы, которые по последней проверке работают на проверенном домене и доступны.
+     * Вердикт относится к домену и текущей сети, поэтому в генерацию передаётся выбор
+     * серверов, а не готовые адреса: остальные домены генератор проверит сам.
+     */
+    val usableDnsCheckPresetIds: Set<String>
+        get() {
+            val available = presets.filter { it.enabledByDefault }.map { it.id }.toSet()
+            return dnsCheck.results
+                .filter { it.status == DnsCheckStatus.Works && it.presetId in available }
+                .map { it.presetId }
+                .toSet()
+        }
+
     val selectedPresets: List<DnsProviderPreset>
         get() = if (selectedPresetIds.isEmpty()) {
             presets.filter { it.id == BuiltInDnsPresets.RECOMMENDED_ID && it.enabledByDefault }
@@ -136,6 +150,15 @@ sealed interface HostsGeneratorEvent {
     data class OnAppProfileSelected(val profileId: String) : HostsGeneratorEvent
     object OnDnsCheck : HostsGeneratorEvent
     object OnDnsCheckCancel : HostsGeneratorEvent
+
+    /** Проверять и отключённые пресеты: нужно, когда сломанный сервер мог ожить. */
+    data class OnDnsCheckIncludeUnavailable(val include: Boolean) : HostsGeneratorEvent
+
+    /** Отметить сервер из результатов проверки для дальнейшей генерации. */
+    data class OnDnsCheckTogglePreset(val id: String, val selected: Boolean) : HostsGeneratorEvent
+
+    /** Перенести отмеченные серверы в выбор генерации. */
+    object OnUseCheckedPresets : HostsGeneratorEvent
     object OnGenerate : HostsGeneratorEvent
     object OnCancelGeneration : HostsGeneratorEvent
     object OnTextCopied : HostsGeneratorEvent
@@ -227,7 +250,16 @@ class HostsGeneratorViewModel(
             is HostsGeneratorEvent.OnDeleteCustomPreset -> deleteCustomPreset(event.id)
 
             is HostsGeneratorEvent.OnDnsCheckDomainChanged -> _state.update {
-                it.copy(dnsCheck = it.dnsCheck.copy(domain = event.domain))
+                // Результаты прошлого домена к новому не относятся: иначе можно
+                // отметить сервер по чужому вердикту.
+                it.copy(
+                    dnsCheck = it.dnsCheck.copy(
+                        domain = event.domain,
+                        results = emptyList(),
+                        markedPresetIds = emptySet(),
+                        progressText = "Запустите проверку для нового домена",
+                    ),
+                )
             }
 
             HostsGeneratorEvent.OnAppProfileCheck -> runAppProfileCheck()
@@ -236,6 +268,42 @@ class HostsGeneratorViewModel(
                 dnsCheckJob?.cancel()
                 _state.update {
                     it.copy(dnsCheck = it.dnsCheck.copy(isRunning = false, progressText = "Проверка остановлена"))
+                }
+            }
+
+            is HostsGeneratorEvent.OnDnsCheckIncludeUnavailable -> _state.update {
+                if (it.dnsCheck.isRunning) {
+                    it
+                } else {
+                    it.copy(dnsCheck = it.dnsCheck.copy(includeUnavailable = event.include))
+                }
+            }
+
+            is HostsGeneratorEvent.OnDnsCheckTogglePreset -> _state.update {
+                val check = it.dnsCheck
+                if (check.isRunning || event.id !in it.usableDnsCheckPresetIds) {
+                    it
+                } else {
+                    val marked = if (event.selected) {
+                        check.markedPresetIds + event.id
+                    } else {
+                        check.markedPresetIds - event.id
+                    }
+                    it.copy(dnsCheck = check.copy(markedPresetIds = marked))
+                }
+            }
+
+            HostsGeneratorEvent.OnUseCheckedPresets -> _state.update {
+                val ids = it.dnsCheck.markedPresetIds.intersect(it.usableDnsCheckPresetIds)
+                if (it.isGenerating || it.dnsCheck.isRunning || ids.isEmpty()) {
+                    it
+                } else {
+                    it.copy(
+                        selectedPresetIds = ids,
+                        dnsCheck = it.dnsCheck.copy(
+                            progressText = "Выбрано для генерации: ${ids.size}",
+                        ),
+                    )
                 }
             }
 
@@ -268,7 +336,7 @@ class HostsGeneratorViewModel(
         // Gemini — dns.dns-ai.ru), поэтому перебираем пресеты и сливаем результат по доменам.
         val state = _state.value
         val allEnabled = state.presets.filter { it.enabledByDefault }
-        val presetsToTry = state.selectedPresets + allEnabled.filter { it.id !in state.selectedPresetIds }
+        val presetsToTry = (state.selectedPresets + allEnabled).distinctBy { it.id }
         if (presetsToTry.isEmpty()) {
             _state.update {
                 it.copy(appProfile = it.appProfile.copy(progressText = "Сначала выберите DNS-пресет"))
@@ -313,11 +381,15 @@ class HostsGeneratorViewModel(
                             result = merged,
                             progressText = if (merged.isUsable) {
                                 "Адресов: ${merged.entries.size} из " +
-                                    "${merged.entries.size + merged.failed.size}" +
+                                    "${merged.totalHosts}" +
                                     " · пресеты: ${merged.presetTitles.joinToString()}"
                             } else {
-                                "Рабочих адресов не найдено: ни один пресет не ответил за " +
-                                    "${merged.elapsedMs / 1000} с"
+                                if (merged.unfinished.isNotEmpty()) {
+                                    "Лимит времени исчерпан: часть доменов не успели проверить"
+                                } else {
+                                    "Рабочих адресов не найдено: ни один пресет не ответил за " +
+                                        "${merged.elapsedMs / 1000} с"
+                                }
                             },
                         ),
                     )
@@ -351,7 +423,18 @@ class HostsGeneratorViewModel(
             }
             return
         }
-        val presets = _state.value.presets
+        val snapshot = _state.value
+        if (snapshot.dnsCheck.isRunning) return
+        // Отключённые пресеты по умолчанию не проверяем: их 8 из 18, и каждый — таймаут.
+        val presets = snapshot.presets.filter {
+            it.enabledByDefault || snapshot.dnsCheck.includeUnavailable
+        }
+        if (presets.isEmpty()) {
+            _state.update {
+                it.copy(dnsCheck = it.dnsCheck.copy(progressText = "Нет DNS для проверки"))
+            }
+            return
+        }
         dnsCheckJob?.cancel()
         _state.update {
             it.copy(
@@ -359,6 +442,7 @@ class HostsGeneratorViewModel(
                     domain = domain,
                     isRunning = true,
                     results = emptyList(),
+                    markedPresetIds = emptySet(),
                     progressText = "Проверяю ${presets.size} DNS…",
                 ),
             )

@@ -90,7 +90,7 @@ fun AppProfileCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Правила для ${profile.title}", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "${profile.hosts.size} доменов · подбирается один адрес на все",
+                        "${profile.hosts.size} доменов · подбор адреса для каждого домена",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -172,7 +172,7 @@ fun AppProfileCard(
             state.result?.let { merged ->
                 if (merged.isUsable) {
                     Text(
-                        "Подобрано ${merged.entries.size} из ${merged.profileTitle.let { _ -> merged.entries.size + merged.failed.size }} " +
+                        "Подобрано ${merged.entries.size} из ${merged.totalHosts} " +
                             "доменов · пресеты: ${merged.presetTitles.joinToString()}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -198,6 +198,18 @@ fun AppProfileCard(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
+                }
+                // «Не успели проверить» — не отказ провайдера, а исчерпанный лимит времени:
+                // смешивать их в одном списке значило бы обвинить рабочий сервер.
+                if (merged.unfinished.isNotEmpty()) {
+                    Text(
+                        "Не успели проверить (${merged.unfinished.size}): " +
+                            merged.unfinished.joinToString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }

@@ -11,8 +11,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.TimeSource
 
 /** Проверка одного домена профиля на выбранном адресе. */
@@ -35,6 +38,45 @@ data class ProfileHostCheck(
         get() = tls == IpCheckResult.SERVES &&
             http.verdict != HttpVerdict.REGION_BLOCKED &&
             http.verdict != HttpVerdict.FAILED
+}
+
+private suspend fun ProfileChecker.resolveHost(
+    host: String,
+    preset: DnsProviderPreset,
+    timeoutMillis: Int,
+    tlsTimeoutMillis: Int,
+): String? {
+    val ips = cancellableCheck {
+        dnsResolver.resolveA(
+            domain = host,
+            dnsServer = preset.primaryDns,
+            timeoutMillis = timeoutMillis,
+            options = DnsQueryOptions(
+                dotHost = preset.dotHost,
+                allowInvalidTls = preset.allowInvalidTls,
+                allowPlainFallback = false,
+            ),
+        )
+    }.getOrDefault(emptyList()).filterNot { it in NULL_ROUTES }.distinct().take(MAX_CANDIDATES)
+    var chosen: String? = null
+    for (candidate in ips) {
+        // Блокирующие сокеты не прерываются отменой корутины, поэтому каждый шаг
+        // ограничен своим таймаутом: иначе дедлайн мержа ждёт виснущий probe.
+        val tls = cancellableCheck {
+            withTimeoutOrNull(tlsTimeoutMillis.toLong().coerceAtLeast(1)) {
+                ipValidator.check(host, candidate, tlsTimeoutMillis)
+            }
+        }.getOrNull() ?: IpCheckResult.REJECTED
+        if (tls != IpCheckResult.SERVES) continue
+        val probe = cancellableCheck {
+            withTimeoutOrNull(PROBE_TIMEOUT_MILLIS) { httpProber.probe(host, candidate) }
+        }.getOrNull()
+        if (probe == null || probe.verdict == HttpVerdict.REGION_BLOCKED ||
+            probe.verdict == HttpVerdict.FAILED) continue
+        chosen = candidate
+        break
+    }
+    return chosen
 }
 
 /**
@@ -204,8 +246,11 @@ data class PerHostRules(
     val entries: Map<String, String>,
     val failed: List<String>,
     val elapsedMs: Long,
+    /** Домены без результата, для которых перебор не завершился. */
+    val unfinished: List<String> = emptyList(),
 ) {
     val isUsable: Boolean get() = entries.isNotEmpty()
+    val totalHosts: Int get() = entries.size + failed.size + unfinished.size
 }
 
 /**
@@ -228,30 +273,7 @@ suspend fun ProfileChecker.resolvePerHost(
     val results = profile.hosts.map { host ->
         async {
             semaphore.withPermit {
-                val ips = cancellableCheck {
-                    dnsResolver.resolveA(
-                        domain = host,
-                        dnsServer = preset.primaryDns,
-                        timeoutMillis = timeoutMillis,
-                        options = DnsQueryOptions(
-                            dotHost = preset.dotHost,
-                            allowInvalidTls = preset.allowInvalidTls,
-                            allowPlainFallback = false,
-                        ),
-                    )
-                }.getOrDefault(emptyList()).filterNot { it in NULL_ROUTES }.distinct().take(MAX_CANDIDATES)
-                var chosen: String? = null
-                for (candidate in ips) {
-                    val tls = cancellableCheck { ipValidator.check(host, candidate, tlsTimeoutMillis) }
-                        .getOrDefault(IpCheckResult.REJECTED)
-                    if (tls != IpCheckResult.SERVES) continue
-                    val probe = cancellableCheck { httpProber.probe(host, candidate) }.getOrNull()
-                    if (probe == null || probe.verdict == HttpVerdict.REGION_BLOCKED ||
-                        probe.verdict == HttpVerdict.FAILED) continue
-                    chosen = candidate
-                    break
-                }
-                host to chosen
+                host to resolveHost(host, preset, timeoutMillis, tlsTimeoutMillis)
             }
         }
     }
@@ -281,8 +303,11 @@ data class MergedRules(
     /** Домены, для которых ни один пресет не дал рабочего адреса. */
     val failed: List<String>,
     val elapsedMs: Long,
+    /** Домены без результата, для которых перебор не завершился. */
+    val unfinished: List<String> = emptyList(),
 ) {
     val isUsable: Boolean get() = entries.isNotEmpty()
+    val totalHosts: Int get() = entries.size + failed.size + unfinished.size
 
     val presetTitles: List<String> get() = sources.values.distinct()
 }
@@ -308,43 +333,49 @@ suspend fun ProfileChecker.resolvePerHostMerged(
     val startedAt = TimeSource.Monotonic.markNow()
     val entries = mutableMapOf<String, String>()
     val sources = mutableMapOf<String, String>()
-    for (preset in presets) {
-        val remaining = profile.hosts.filterNot { it in entries }
-        if (remaining.isEmpty()) break
-        if (startedAt.elapsedNow().inWholeMilliseconds > deadlineMillis) break
-        onProgress(entries.size, profile.hosts.size, preset.title)
-        // Быстрый отсев: сначала два домена. Пресет, который не обслуживает даже их,
-        // не стоит проверять на всех 19 — иначе перебор десяти пресетов идёт минутами.
-        val sample = remaining.take(2)
-        val probe = resolvePerHost(
-            profile = profile.copy(hosts = sample),
-            preset = preset,
-            timeoutMillis = timeoutMillis,
-            tlsTimeoutMillis = tlsTimeoutMillis,
-        )
-        if (probe.entries.isEmpty() && remaining.size > sample.size) continue
-        val rules = if (remaining.size == sample.size) probe else resolvePerHost(
-            profile = profile.copy(hosts = remaining),
-            preset = preset,
-            timeoutMillis = timeoutMillis,
-            tlsTimeoutMillis = tlsTimeoutMillis,
-        )
-        rules.entries.forEach { (host, ip) ->
-            entries[host] = ip
-            sources[host] = preset.title
+    val hosts = profile.hosts.distinct()
+    val checked = mutableMapOf<String, Int>()
+    val lock = Mutex()
+    val semaphore = Semaphore(3)
+    withTimeoutOrNull(deadlineMillis) {
+        for (preset in presets) {
+            val remaining = hosts.filterNot { it in entries }
+            if (remaining.isEmpty()) break
+            onProgress(entries.size, hosts.size, preset.title)
+            coroutineScope {
+                remaining.map { host ->
+                    async {
+                        semaphore.withPermit {
+                            val ip = resolveHost(host, preset, timeoutMillis, tlsTimeoutMillis)
+                            lock.withLock {
+                                checked[host] = (checked[host] ?: 0) + 1
+                                if (ip != null) {
+                                    entries[host] = ip
+                                    sources[host] = preset.title
+                                }
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
         }
     }
+    val missing = hosts.filterNot { it in entries }
     return MergedRules(
         profileId = profile.id,
         profileTitle = profile.title,
-        entries = profile.hosts.filter { it in entries }.associateWith { entries.getValue(it) },
-        sources = sources.filterKeys { it in entries },
-        failed = profile.hosts.filterNot { it in entries },
+        entries = hosts.filter { it in entries }.associateWith { entries.getValue(it) },
+        sources = hosts.filter { it in sources }.associateWith { sources.getValue(it) },
+        failed = missing.filter { (checked[it] ?: 0) == presets.size },
+        unfinished = missing.filter { (checked[it] ?: 0) < presets.size },
         elapsedMs = startedAt.elapsedNow().inWholeMilliseconds,
     )
 }
 
 private val NULL_ROUTES = setOf("0.0.0.0", "::")
+
+/** Верхняя граница HTTP-пробы: без неё висящий сервер держит весь подбор. */
+private const val PROBE_TIMEOUT_MILLIS = 8_000L
 private const val MAX_CANDIDATES = 4
 
 /**

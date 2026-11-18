@@ -523,7 +523,7 @@ private fun GenerateSection(
                     when {
                         domainCount == 0 -> "Нет доменов — включите группы"
                         selectedPresetsCount > 1 ->
-                            "Сравнить $selectedPresetsCount DNS · $domainCount ${domainCount.domainsWord()}"
+                            "Сгенерировать один hosts · $selectedPresetsCount DNS"
                         else -> "Сгенерировать hosts · $domainCount ${domainCount.domainsWord()}"
                     },
                 )
@@ -1320,7 +1320,7 @@ private fun PresetsPanel(
                         onClick = onSelectAll,
                         enabled = available.isNotEmpty() && !allSelected,
                     ) {
-                        Text("Сравнить все")
+                        Text("Выбрать все доступные")
                     }
                 }
 

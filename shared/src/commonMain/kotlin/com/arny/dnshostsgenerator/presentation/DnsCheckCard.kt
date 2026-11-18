@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,6 +45,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -60,6 +65,12 @@ data class DnsCheckUiState(
     val isRunning: Boolean = false,
     val results: List<DnsCheckResult> = emptyList(),
     val progressText: String = "Выберите домен и запустите проверку",
+    /** Проверять и отключённые пресеты (по умолчанию скрыты). */
+    val includeUnavailable: Boolean = false,
+    /** Серверы, отмеченные по результатам проверки для будущей генерации. */
+    val markedPresetIds: Set<String> = emptySet(),
+    /** Результаты, которые можно отмечать: рабочие и доступные серверы. */
+    val selectablePresetIds: Set<String> = emptySet(),
 )
 
 /**
@@ -73,6 +84,10 @@ fun DnsCheckCard(
     onRunCheck: () -> Unit,
     onCancelCheck: () -> Unit,
     modifier: Modifier = Modifier,
+    onIncludeUnavailable: (Boolean) -> Unit = {},
+    onPresetMarked: (String, Boolean) -> Unit = { _, _ -> },
+    onUseMarked: () -> Unit = {},
+    canApplySelection: Boolean = true,
 ) {
     // Развёрнутость — не часть данных проверки: это локальное предпочтение экрана.
     // По умолчанию блок свёрнут: на телефоне он отбирал половину экрана до основной задачи.
@@ -186,12 +201,53 @@ fun DnsCheckCard(
                 )
             }
 
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .toggleable(
+                        value = state.includeUnavailable,
+                        enabled = !state.isRunning,
+                        role = Role.Checkbox,
+                        onValueChange = onIncludeUnavailable,
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(
+                    checked = state.includeUnavailable,
+                    onCheckedChange = null,
+                    enabled = !state.isRunning,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Проверять и недоступные", style = MaterialTheme.typography.bodyMedium)
+            }
+
             if (state.isRunning) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
 
             if (state.results.isNotEmpty()) {
                 DnsCheckSummary(state.results)
+                // Вердикт относится к проверенному домену и текущей сети, а не ко всей группе:
+                // поэтому из проверки переносится выбор серверов, а не готовые адреса.
+                Text(
+                    "Для ${state.domain} в текущей сети · время всей проверки",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val markedCount = state.markedPresetIds.count { it in state.selectablePresetIds }
+                OutlinedButton(
+                    onClick = onUseMarked,
+                    enabled = canApplySelection && !state.isRunning && markedCount > 0,
+                ) {
+                    Text("Использовать отмеченные для генерации ($markedCount)")
+                }
+                if (markedCount > 1) {
+                    Text(
+                        "Будет создан один объединённый hosts",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Surface(
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
                     shape = MaterialTheme.shapes.small,
@@ -199,7 +255,16 @@ fun DnsCheckCard(
                 ) {
                     Column(modifier = Modifier.padding(vertical = 4.dp, horizontal = 8.dp)) {
                         state.results.forEach { result ->
-                            DnsCheckRow(result)
+                            val selectable = result.presetId in state.selectablePresetIds
+                            DnsCheckRow(
+                                result = result,
+                                marked = selectable && result.presetId in state.markedPresetIds,
+                                onMarked = if (selectable && !state.isRunning) {
+                                    { checked -> onPresetMarked(result.presetId, checked) }
+                                } else {
+                                    null
+                                },
+                            )
                         }
                     }
                 }
@@ -246,7 +311,11 @@ private fun StatusChip(text: String, color: Color) {
 }
 
 @Composable
-private fun DnsCheckRow(result: DnsCheckResult) {
+private fun DnsCheckRow(
+    result: DnsCheckResult,
+    marked: Boolean = false,
+    onMarked: ((Boolean) -> Unit)? = null,
+) {
     val clipboardManager = LocalClipboardManager.current
     val snackbarHostState = LocalSnackbarHostState.current
     val scope = rememberCoroutineScope()
@@ -261,7 +330,18 @@ private fun DnsCheckRow(result: DnsCheckResult) {
             .padding(vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Surface(color = color, shape = CircleShape, modifier = Modifier.size(8.dp)) {}
+        if (onMarked == null) {
+            Surface(color = color, shape = CircleShape, modifier = Modifier.size(8.dp)) {}
+        } else {
+            // Отмечать можно только рабочие серверы: остальные всё равно не дадут hosts.
+            Checkbox(
+                checked = marked,
+                onCheckedChange = onMarked,
+                modifier = Modifier.semantics {
+                    contentDescription = "Выбрать ${result.title}"
+                },
+            )
+        }
         Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

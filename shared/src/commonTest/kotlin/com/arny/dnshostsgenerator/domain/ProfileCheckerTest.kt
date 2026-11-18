@@ -184,6 +184,74 @@ class ProfileCheckerTest {
         assertTrue(cancelled)
     }
 
+    /**
+     * Регрессия: раньше пресет отбрасывался целиком, если не обслужил первые два домена,
+     * и домены, которые он всё-таки обслуживает, оставались без адреса.
+     */
+    @Test
+    fun merged_keepsPresetThatServedOnlyLaterHosts() = runBlocking {
+        val profile = AppProfile(
+            id = "m",
+            title = "Профиль",
+            hosts = listOf("first.example", "second.example", "third.example"),
+        )
+        // Отвечает только пресет с адресом 2.2.2.2; TLS проходит только для third.example.
+        val resolver = object : DnsResolver {
+            override suspend fun resolveA(domain: String, dnsServer: String, timeoutMillis: Int): List<String> =
+                if (dnsServer == "2.2.2.2") listOf("5.5.5.5") else emptyList()
+
+            override suspend fun resolveA(
+                domain: String,
+                dnsServer: String,
+                timeoutMillis: Int,
+                options: DnsQueryOptions,
+            ): List<String> = resolveA(domain, dnsServer, timeoutMillis)
+        }
+        val checker = ProfileChecker(
+            resolver,
+            ProfileFakeValidator(serving = setOf("third.example")),
+            // Без HTTP-вердикта OK проба по умолчанию возвращает FAILED и адрес не годится.
+            ProfileFakeProber(mapOf("third.example|5.5.5.5" to HttpVerdict.OK)),
+        )
+
+        val merged = checker.resolvePerHostMerged(
+            profile = profile,
+            presets = listOf(preset.copy(id = "b", primaryDns = "1.1.1.1"), preset.copy(id = "a", primaryDns = "2.2.2.2")),
+            deadlineMillis = 30_000,
+        )
+
+        assertEquals(setOf("third.example"), merged.entries.keys)
+        assertEquals(listOf("first.example", "second.example"), merged.failed)
+        assertTrue(merged.unfinished.isEmpty(), "все домены успели проверить: ${merged.unfinished}")
+    }
+
+    /** Дедлайн не должен выдавать «не проверили» за «провайдер отказал». */
+    @Test
+    fun merged_reportsUnfinishedSeparatelyOnDeadline() = runBlocking {
+        val profile = AppProfile(id = "d", title = "Профиль", hosts = listOf("slow.example"))
+        val slow = object : DnsResolver {
+            override suspend fun resolveA(domain: String, dnsServer: String, timeoutMillis: Int): List<String> {
+                kotlinx.coroutines.delay(2_000)
+                return listOf("1.1.1.1")
+            }
+
+            override suspend fun resolveA(
+                domain: String,
+                dnsServer: String,
+                timeoutMillis: Int,
+                options: DnsQueryOptions,
+            ): List<String> = resolveA(domain, dnsServer, timeoutMillis)
+        }
+
+        val merged = ProfileChecker(slow, ProfileFakeValidator(emptySet()), ProfileFakeProber(emptyMap()))
+            .resolvePerHostMerged(profile, listOf(preset), deadlineMillis = 200)
+
+        assertTrue(merged.entries.isEmpty())
+        assertTrue(merged.failed.isEmpty(), "домен не проверен до конца, значит не отказ: ${merged.failed}")
+        assertEquals(listOf("slow.example"), merged.unfinished)
+        assertEquals(1, merged.totalHosts)
+    }
+
     @Test
     fun rules_haveMappingAndBlockingLineForEveryHost() {
         val rules = buildPersonalDnsFilterRules(profile, "9.9.9.9")

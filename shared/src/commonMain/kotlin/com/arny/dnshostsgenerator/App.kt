@@ -79,12 +79,24 @@ fun AppContent() {
                 onAppProfileSelected = { id ->
                     hostsGeneratorViewModel.onEvent(HostsGeneratorEvent.OnAppProfileSelected(id))
                 },
-                dnsCheckState = hostsGeneratorState.dnsCheck,
+                // Отмечать в результатах можно только доступные рабочие серверы.
+                dnsCheckState = hostsGeneratorState.dnsCheck.copy(
+                    selectablePresetIds = hostsGeneratorState.usableDnsCheckPresetIds,
+                ),
                 onDnsCheckDomainChanged = {
                     hostsGeneratorViewModel.onEvent(HostsGeneratorEvent.OnDnsCheckDomainChanged(it))
                 },
                 onDnsCheckRun = { hostsGeneratorViewModel.onEvent(HostsGeneratorEvent.OnDnsCheck) },
                 onDnsCheckCancel = { hostsGeneratorViewModel.onEvent(HostsGeneratorEvent.OnDnsCheckCancel) },
+                onDnsCheckIncludeUnavailable = {
+                    hostsGeneratorViewModel.onEvent(HostsGeneratorEvent.OnDnsCheckIncludeUnavailable(it))
+                },
+                onDnsCheckPresetMarked = { id, marked ->
+                    hostsGeneratorViewModel.onEvent(HostsGeneratorEvent.OnDnsCheckTogglePreset(id, marked))
+                },
+                onUseCheckedPresets = {
+                    hostsGeneratorViewModel.onEvent(HostsGeneratorEvent.OnUseCheckedPresets)
+                },
                 modifier = Modifier.padding(innerPadding),
             )
         }

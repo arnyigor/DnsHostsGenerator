@@ -40,6 +40,9 @@ fun AppNavigation(
     onDnsCheckDomainChanged: (String) -> Unit,
     onDnsCheckRun: () -> Unit,
     onDnsCheckCancel: () -> Unit,
+    onDnsCheckIncludeUnavailable: (Boolean) -> Unit = {},
+    onDnsCheckPresetMarked: (String, Boolean) -> Unit = { _, _ -> },
+    onUseCheckedPresets: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val navController = rememberNavController()
@@ -78,6 +81,10 @@ fun AppNavigation(
                             onDomainChanged = onDnsCheckDomainChanged,
                             onRunCheck = onDnsCheckRun,
                             onCancelCheck = onDnsCheckCancel,
+                            onIncludeUnavailable = onDnsCheckIncludeUnavailable,
+                            onPresetMarked = onDnsCheckPresetMarked,
+                            onUseMarked = onUseCheckedPresets,
+                            canApplySelection = !hostsGeneratorState.isGenerating,
                         )
                     }
                 },
