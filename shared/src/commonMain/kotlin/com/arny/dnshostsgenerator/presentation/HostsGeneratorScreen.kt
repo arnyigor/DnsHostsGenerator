@@ -1719,19 +1719,22 @@ private fun ResultActions(
             icon = { Icon(Icons.Default.Warning, contentDescription = null) },
             title = { Text("Обновить системный hosts?") },
             text = {
-                Text(
-                    "Текущий hosts будет заменён с созданием резервной копии рядом с файлом. " +
-                        "Для записи может потребоваться запуск от имени администратора/root.",
-                )
-                Spacer(Modifier.height(8.dp))
-                // Кэш DNS держит старые ответы: без этого шага «применил, а не работает».
-                Text(
-                    "После записи очистите кэш DNS, иначе изменения не видны: " +
-                        "в Windows — ipconfig /flushdns, в Chrome/Edge — " +
-                        "chrome://net-internals/#dns → Clear host cache.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                // Несколько детей в слоте text у AlertDialog рисуются друг на друге (баг вёрстки),
+                // поэтому текст собран в Column.
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Текущий hosts будет заменён с созданием резервной копии рядом с файлом. " +
+                            "Для записи может потребоваться запуск от имени администратора/root.",
+                    )
+                    // Кэш DNS держит старые ответы: без этого шага «применил, а не работает».
+                    Text(
+                        "После записи очистите кэш DNS, иначе изменения не видны: " +
+                            "в Windows — ipconfig /flushdns, в Chrome/Edge — " +
+                            "chrome://net-internals/#dns → Clear host cache.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             },
             confirmButton = {
                 TextButton(
