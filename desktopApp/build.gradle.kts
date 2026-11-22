@@ -23,7 +23,7 @@ compose.desktop {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
             packageName = "DnsHostsGenerator"
             // Должно совпадать с androidApp: иначе в имени exe остаётся старая версия.
-            packageVersion = "1.5.2"
+            packageVersion = "1.5.3"
             includeAllModules = true
         }
     }
