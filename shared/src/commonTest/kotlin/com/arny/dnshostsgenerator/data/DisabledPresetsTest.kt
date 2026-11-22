@@ -56,6 +56,9 @@ class DisabledPresetsTest {
         assertEquals(
             listOf(
                 "dns_bezmezhau_com",
+                // 22.11.2026: DoT отвечает, один адрес 77.90.47.224 обслуживает
+                // gemini/aistudio/chatgpt — добавлен по наводке из шапки DNS-клуба.
+                "api_bezshansov_ru",
                 "dns_astracat_ru",
                 "dns_eu_geohide_ru",
                 "dns_mafioznik_xyz",

@@ -97,6 +97,8 @@ import com.arny.dnshostsgenerator.domain.exportFileName
 import com.arny.dnshostsgenerator.domain.exportText
 import com.arny.dnshostsgenerator.data.currentEpochMillis
 import com.arny.dnshostsgenerator.platform.canUpdateSystemHosts
+import com.arny.dnshostsgenerator.platform.formatTimeOfDay
+import com.arny.dnshostsgenerator.platform.isMobilePlatform
 import com.arny.dnshostsgenerator.platform.pickArchive
 import com.arny.dnshostsgenerator.presentation.theme.AppTheme
 import kotlinx.coroutines.launch
@@ -122,6 +124,7 @@ fun HostsGeneratorScreen(
         statusText = state.statusText,
         results = state.results,
         selectedResultIndex = state.selectedResultIndex,
+        generatedAt = state.lastGeneratedAt,
         onPresetChecked = { id, checked -> onEvent(HostsGeneratorEvent.OnPresetChecked(id, checked)) },
         onSelectAllPresets = { onEvent(HostsGeneratorEvent.OnSelectAllPresets) },
         onClearPresets = { onEvent(HostsGeneratorEvent.OnClearPresets) },
@@ -180,6 +183,8 @@ fun HostsGeneratorScreen(
     statusText: String,
     results: List<GenerationResult>,
     selectedResultIndex: Int,
+    /** Когда собран текущий результат: адреса у провайдеров живут недолго. */
+    generatedAt: Long? = null,
     onPresetChecked: (String, Boolean) -> Unit,
     onSelectAllPresets: () -> Unit,
     onClearPresets: () -> Unit,
@@ -275,6 +280,12 @@ fun HostsGeneratorScreen(
             ResultsPanel(
                 modifier = modifier,
                 results = results,
+                generatedAt = generatedAt,
+                onRegenerate = if (results.isNotEmpty() && !isGenerating) {
+                    onGenerate
+                } else {
+                    null
+                },
                 isGenerating = isGenerating,
                 selectedResultIndex = selectedResultIndex,
                 selectedResult = selectedResult,
@@ -1143,6 +1154,8 @@ private fun ConfirmDeleteDialog(
 private fun ResultsPanel(
     modifier: Modifier,
     results: List<GenerationResult>,
+    generatedAt: Long? = null,
+    onRegenerate: (() -> Unit)? = null,
     isGenerating: Boolean,
     selectedResultIndex: Int,
     selectedResult: GenerationResult?,
@@ -1159,6 +1172,9 @@ private fun ResultsPanel(
             results = results,
             selectedResultIndex = selectedResultIndex,
             onSelect = onSelectResult,
+            generatedAt = generatedAt,
+            onRegenerate = onRegenerate,
+            isGenerating = isGenerating,
         )
         if (selectedResult != null) {
             Text(
@@ -1557,13 +1573,45 @@ private fun ResultsHeader(
     results: List<GenerationResult>,
     selectedResultIndex: Int,
     onSelect: (Int) -> Unit,
+    generatedAt: Long? = null,
+    onRegenerate: (() -> Unit)? = null,
+    isGenerating: Boolean = false,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            "Результат",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Результат",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            // Адреса у провайдеров живут недолго: отметка времени и повторный замер
+            // дешевле, чем догадки «почему перестало работать».
+            if (onRegenerate != null) {
+                TextButton(onClick = onRegenerate, enabled = !isGenerating) {
+                    Text("Проверить заново")
+                }
+            }
+        }
+        if (generatedAt != null) {
+            Text(
+                "замер в ${formatTimeOfDay(generatedAt)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (results.isNotEmpty() && isMobilePlatform) {
+            // Проверено практикой клуба (пост 4PDA 146131970): приложение держит свои
+            // сокеты и кэш, поэтому после смены DNS его нужно почистить, иначе «не работает».
+            Text(
+                "Не открывается? Очистите данные и кэш приложения и проверьте снова",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         // Переключатель нужен только при сравнении нескольких DNS.
         if (results.size > 1) {
             Row(

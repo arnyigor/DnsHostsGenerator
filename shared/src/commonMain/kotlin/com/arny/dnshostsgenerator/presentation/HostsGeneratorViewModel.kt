@@ -23,6 +23,7 @@ import com.arny.dnshostsgenerator.domain.resolvePerHostMerged
 import com.arny.dnshostsgenerator.domain.ProfileChecker
 import com.arny.dnshostsgenerator.generator.HostsGenerator
 import com.arny.dnshostsgenerator.logging.AppLogger
+import com.arny.dnshostsgenerator.platform.nowEpochMillis
 import com.arny.dnshostsgenerator.nextdns.HostsParser
 import com.arny.dnshostsgenerator.platform.saveTextFile
 import com.arny.dnshostsgenerator.platform.updateSystemHosts
@@ -81,6 +82,8 @@ data class HostsGeneratorState(
     val progressText: String = "Готово к генерации",
     val statusText: String = "По умолчанию выбран один рекомендуемый DNS. Остальные нужны только для сравнения.",
     val results: List<GenerationResult> = emptyList(),
+    /** Когда собран текущий результат: адреса живут недолго, отметка помогает это заметить. */
+    val lastGeneratedAt: Long? = null,
     val selectedResultIndex: Int = 0,
     val toastText: String? = null,
     /** Блок «Проверка DNS»: какой сервер сейчас реально работает. */
@@ -834,6 +837,7 @@ class HostsGeneratorViewModel(
                     _state.update {
                         it.copy(
                             results = generatedResults.toList(),
+                            lastGeneratedAt = nowEpochMillis(),
                             selectedResultIndex = 0,
                             statusText = "Мерж готов: ${merged.stats.resolvedCount} доменов через " +
                                 presets.size + " пресетов",
@@ -893,6 +897,7 @@ class HostsGeneratorViewModel(
                     _state.update {
                         it.copy(
                             results = generatedResults.toList(),
+                            lastGeneratedAt = nowEpochMillis(),
                             selectedResultIndex = generatedResults.lastIndex
                         )
                     }

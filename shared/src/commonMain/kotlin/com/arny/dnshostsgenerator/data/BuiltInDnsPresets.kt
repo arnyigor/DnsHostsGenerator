@@ -20,6 +20,16 @@ object BuiltInDnsPresets {
             outputFileName = "host_out_dns.bezmezhau.com.txt",
         ),
         DnsProviderPreset(
+            id = "api_bezshansov_ru",
+            title = "api.bezshansov.ru",
+            primaryDns = "api.bezshansov.ru",
+            outputFileName = "host_out_api.bezshansov.ru.txt",
+            // 22.11.2026: DoT на 853 с валидным сертификатом, один адрес 77.90.47.224
+            // на всё: gemini.google.com 200, aistudio.google.com 302, chatgpt.com 200,
+            // auth.openai.com 200. Сервис из шапки DNS-клуба 4PDA (пост 146101620),
+            // поэтому адрес может смениться — тогда карточка покажет отказ.
+        ),
+        DnsProviderPreset(
             id = "dns_astracat_ru",
             title = "dns.astracat.ru",
             primaryDns = "dns.astracat.ru",
@@ -160,8 +170,11 @@ object BuiltInDnsPresets {
             primaryDns = "dns.dagami.ru",
             outputFileName = "host_out_dns.dagami.ru.txt",
             enabledByDefault = false,
-            // 08.11.2026: адрес 31.76.52.235 не открывает TCP:443.
-            disabledReason = "отдаёт недостижимый адрес (проверено 08.11.2026)",
+            // 22.11.2026: DoT отвечает, но для gemini.google.com отдаёт 45.86.65.240,
+            // который не открывает TCP:443 (таймаут); для aistudio.google.com тот же
+            // адрес отвечает 302. Провайдер сменил домен на dagami.ru (пост 146101620),
+            // но там DoT на 853 не поднимается.
+            disabledReason = "адрес для Gemini недостижим, dagami.ru без DoT (проверено 22.11.2026)",
         ),
         DnsProviderPreset(
             id = "xbox_dns_ru",

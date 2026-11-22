@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import com.arny.dnshostsgenerator.domain.CertDates
 import com.arny.dnshostsgenerator.domain.DnsCheckResult
 import com.arny.dnshostsgenerator.domain.DnsCheckStatus
+import com.arny.dnshostsgenerator.platform.formatTimeOfDay
 import com.arny.dnshostsgenerator.platform.nowEpochMillis
 import kotlinx.coroutines.launch
 
@@ -71,6 +72,8 @@ data class DnsCheckUiState(
     val markedPresetIds: Set<String> = emptySet(),
     /** Результаты, которые можно отмечать: рабочие и доступные серверы. */
     val selectablePresetIds: Set<String> = emptySet(),
+    /** Когда выполнялась эта проверка: вердикт относится к тому моменту. */
+    val checkedAt: Long? = null,
 )
 
 /**
@@ -230,7 +233,11 @@ fun DnsCheckCard(
                 // Вердикт относится к проверенному домену и текущей сети, а не ко всей группе:
                 // поэтому из проверки переносится выбор серверов, а не готовые адреса.
                 Text(
-                    "Для ${state.domain} в текущей сети · время всей проверки",
+                    buildString {
+                        append("Для ${state.domain} в текущей сети")
+                        state.checkedAt?.let { append(" · проверено в ${formatTimeOfDay(it)}") }
+                        append(" · время всей проверки")
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
