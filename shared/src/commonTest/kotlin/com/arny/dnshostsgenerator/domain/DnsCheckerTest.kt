@@ -129,6 +129,31 @@ class DnsCheckerTest {
         assertEquals("chatgpt.com", resolver.lastDomain)
     }
 
+    /**
+     * DoT жив, но сертификат выписан на другое имя: сервис сменил домен, а старое имя
+     * продолжают обслуживать (проверено 24.11.2026: api.bezshansov.ru отдаёт сертификат
+     * api.magicinfo.art). Вердикт должен отличаться от «не отвечает»: совет «выбери
+     * другой DNS» здесь бесполезен — сервер работает, у него просто другое имя.
+     */
+    @Test
+    fun check_classifiesCertificateMismatchSeparatelyFromUnreachable() = runBlocking {
+        val checker = DnsChecker(
+            dnsResolver = FakeResolver(
+                answers = emptyMap(),
+                failFor = setOf("3.3.3.3"),
+                failMessage = "javax.net.ssl.SSLPeerUnverifiedException: " +
+                    "Certificate for <api.bezshansov.ru> doesn't match any of the " +
+                    "subject alternative names: [api.magicinfo.art]",
+            ),
+            ipValidator = FakeValidator(serving = emptySet()),
+        )
+
+        val result = checker.check(listOf(preset("mi", "Bezshansov", "3.3.3.3")), "gemini.google.com").single()
+
+        assertEquals(DnsCheckStatus.CertificateMismatch, result.status)
+        assertTrue(result.detail.orEmpty().contains("сменил домен"))
+    }
+
     private fun preset(id: String, title: String, dns: String) = DnsProviderPreset(
         id = id,
         title = title,
@@ -140,6 +165,7 @@ class DnsCheckerTest {
 private class FakeResolver(
     private val answers: Map<String, List<String>>,
     private val failFor: Set<String> = emptySet(),
+    private val failMessage: String = "timeout",
 ) : DnsResolver {
     var lastOptions: DnsQueryOptions? = null
     var lastDomain: String? = null
@@ -158,7 +184,7 @@ private class FakeResolver(
     ): List<String> {
         lastDomain = domain
         lastOptions = options
-        if (dnsServer in failFor) throw IllegalStateException("timeout")
+        if (dnsServer in failFor) throw IllegalStateException(failMessage)
         return answers[dnsServer].orEmpty()
     }
 }

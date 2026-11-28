@@ -463,6 +463,13 @@ class NextDnsImportViewModel(
     }
 
     private fun buildImportStatusMessage(summary: ImportSummary): String {
+        // Обрезку лимитом сервиса показываем явно: часть доменов специально не импортирована,
+        // и «все записи проверены» без этой строки вводила бы в заблуждение.
+        if (summary.truncatedCount > 0) {
+            return "Лимит NextDNS (${NextDnsClient.RULE_LIMIT} правил на профиль): " +
+                "не импортированы ${summary.truncatedCount} из ${summary.requested} доменов — " +
+                "остальные добавлены"
+        }
         return when {
             summary.cancelled -> "Импорт отменён"
             summary.verifiedSuccessfully -> "Импорт завершён: все ${summary.requested} записей проверены и добавлены"

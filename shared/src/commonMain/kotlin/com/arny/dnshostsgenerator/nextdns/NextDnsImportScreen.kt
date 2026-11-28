@@ -571,6 +571,7 @@ private fun ProfileResultCard(
                 Text(
                     text = when {
                         summary.cancelled -> "Импорт отменён. Часть записей могла быть добавлена."
+                        summary.truncatedCount > 0 -> "Лимит NextDNS: ${summary.truncatedCount} записей не импортированы (профиль принимает не больше ${NextDnsClient.RULE_LIMIT})."
                         summary.verifiedSuccessfully -> "Готово: все записи добавлены и проверены."
                         summary.missingAfterVerify.isNotEmpty() -> "Есть проблемы: часть записей не найдена после проверки."
                         summary.failed > 0 -> "Есть ошибки при добавлении записей."

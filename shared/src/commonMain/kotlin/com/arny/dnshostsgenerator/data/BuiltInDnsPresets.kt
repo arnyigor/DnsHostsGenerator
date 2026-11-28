@@ -20,14 +20,28 @@ object BuiltInDnsPresets {
             outputFileName = "host_out_dns.bezmezhau.com.txt",
         ),
         DnsProviderPreset(
+            id = "dns_magicdns_ru",
+            title = "dns.magicdns.ru",
+            primaryDns = "dns.magicdns.ru",
+            outputFileName = "host_out_dns.magicdns.ru.txt",
+            // 24.11.2026: DoT 853, сертификат до 17.01.2027, адрес 109.120.187.249
+            // обслуживает gemini.google.com (200) и aistudio.google.com (302) — повторная
+            // живая проверка в тот же день. В ветке 4PDA (посты 146152128, 146167064,
+            // 146172xxx) это самый повторяемый совет для AI, но сервис работает волнами
+            // (там же: «уже не работает» / «на телефоне нет интернета вовсе»):
+            // при отказе переключаться на dns.dns-ai.ru.
+        ),
+        DnsProviderPreset(
             id = "api_bezshansov_ru",
             title = "api.bezshansov.ru",
             primaryDns = "api.bezshansov.ru",
             outputFileName = "host_out_api.bezshansov.ru.txt",
-            // 22.11.2026: DoT на 853 с валидным сертификатом, один адрес 77.90.47.224
-            // на всё: gemini.google.com 200, aistudio.google.com 302, chatgpt.com 200,
-            // auth.openai.com 200. Сервис из шапки DNS-клуба 4PDA (пост 146101620),
-            // поэтому адрес может смениться — тогда карточка покажет отказ.
+            // 22.11.2026: работал (один адрес 77.90.47.224 на все AI-домены).
+            // 24.11.2026: DoT отдаёт сертификат на api.magicinfo.art — Hostname mismatch,
+            // пресет не даёт ни одного адреса. Новый домен сервиса тоже не отвечает
+            // по TCP:443, поэтому пока отключён, а не переименован.
+            enabledByDefault = false,
+            disabledReason = "сертификат выписан на api.magicinfo.art: сервис сменил домен (проверено 24.11.2026)",
         ),
         DnsProviderPreset(
             id = "dns_astracat_ru",
@@ -64,6 +78,9 @@ object BuiltInDnsPresets {
             outputFileName = "host_out_eu.geohide.ru.txt",
             // 23.10.2026: DoT 0.5–0.8 с, TLS-валидные адреса для chatgpt.com, claude.ai,
             // gemini.google.com и open.spotify.com. Именно EU-ветка работает, в отличие от RU.
+            // 24.11.2026: DoT молчит в таймаут — EU-ветка тоже легла.
+            enabledByDefault = false,
+            disabledReason = "DoT не отвечает, таймаут соединения (проверено 24.11.2026)",
         ),
         DnsProviderPreset(
             id = "dns_us_geohide_ru",

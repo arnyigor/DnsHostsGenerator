@@ -120,6 +120,8 @@ data class ImportSummary(
     val failures: List<ImportFailure> = emptyList(),
     val missingAfterVerify: List<NextDnsRewrite> = emptyList(),
     val cancelled: Boolean = false,
+    /** Сколько доменов не импортированы из-за лимита профиля ([NextDnsClient.RULE_LIMIT]); 0 — обрезки нет. */
+    val truncatedCount: Int = 0,
 ) {
     val verifiedSuccessfully: Boolean
         get() = !cancelled && failed == 0 && missingAfterVerify.isEmpty()

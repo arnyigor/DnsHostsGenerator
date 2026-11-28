@@ -41,6 +41,9 @@ class NextDnsClient(
     companion object {
         private const val API_BASE = "https://api.nextdns.io"
         private const val WEB_ORIGIN = "https://my.nextdns.io"
+        /** Предел правил на профиль у NextDNS (проверено в ветке 4PDA, ноябрь 2026). */
+        const val RULE_LIMIT = 500
+
         private const val IMPORT_BURST_SIZE = 58
         private const val IMPORT_REST_DELAY_MILLIS = 5_000L
         private const val IMPORT_BATCH_SIZE = 4
@@ -217,7 +220,7 @@ class NextDnsClient(
         val existingPairs = existing.associateBy { it.name.lowercase() to it.content }
         val existingTargetByDomain = existing.associateBy({ it.name.lowercase() }) { it.content }
 
-        val pending = mutableListOf<NextDnsRewrite>()
+        val fresh = mutableListOf<NextDnsRewrite>()
         var skippedExisting = 0
         val failures = mutableListOf<ImportFailure>()
         val statusCounts = mutableMapOf<String, Int>()
@@ -238,8 +241,15 @@ class NextDnsClient(
                 statusCounts["409"] = statusCounts.getOrDefault("409", 0) + 1
                 continue
             }
-            pending += rewrite
+            fresh += rewrite
         }
+
+        // NextDNS ограничивает профиль RULE_LIMIT правилами и отказывает на лишние.
+        // Не режем молча и не отвергаем весь список: импортируем то, что влезает в
+        // свободные слоты, а обрезку честно показываем в сводке (truncatedCount).
+        val freeSlots = (RULE_LIMIT - existing.size).coerceAtLeast(0)
+        val pending = fresh.take(freeSlots)
+        val truncatedCount = fresh.size - pending.size
 
         // Import with concurrency control
         var imported = 0
@@ -254,7 +264,8 @@ class NextDnsClient(
                 failed = failures.size,
                 statusCounts = statusCounts,
                 failures = failures,
-                missingAfterVerify = verifyMissing(profileId, rewrites),
+                truncatedCount = truncatedCount,
+                missingAfterVerify = verifyMissing(profileId, pending),
             )
         }
 
@@ -448,7 +459,8 @@ class NextDnsClient(
             failed = failed,
             statusCounts = statusCounts,
             failures = failures,
-            missingAfterVerify = verifyMissing(profileId, rewrites),
+            truncatedCount = truncatedCount,
+            missingAfterVerify = verifyMissing(profileId, pending),
         )
     }
 

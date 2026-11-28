@@ -294,14 +294,28 @@ private fun DnsCheckSummary(results: List<DnsCheckResult>) {
     val works = results.count { it.status == DnsCheckStatus.Works }
     val unreachable = results.count { it.status == DnsCheckStatus.Unreachable }
     val other = results.size - works - unreachable
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        StatusChip("работает $works", StatusColor.Works)
-        if (other > 0) StatusChip("проблемы $other", StatusColor.Warn)
-        if (unreachable > 0) StatusChip("не отвечает $unreachable", StatusColor.Muted)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusChip("работает $works", StatusColor.Works)
+            if (other > 0) StatusChip("проблемы $other", StatusColor.Warn)
+            if (unreachable > 0) StatusChip("не отвечает $unreachable", StatusColor.Muted)
+        }
+        // Сводка 4PDA (пост 146172150, 24.11.2026): блокировки привязаны к оператору —
+        // чаще всего страдают МТС, Ростелеком и Билайн в МСК, Подмосковье и Новосибирске.
+        // Если не работает ни один сервер, дело может быть в сети, а не в DNS.
+        if (works == 0 && results.isNotEmpty()) {
+            Text(
+                "Не работает ни один сервер: блокировки зависят от оператора " +
+                    "(чаще всего МТС, Ростелеком, Билайн). Сначала попробуй другую сеть — " +
+                    "возможно, DNS тут ни при чём.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -464,6 +478,7 @@ private fun statusColor(status: DnsCheckStatus): Color = when (status) {
     DnsCheckStatus.Blocked -> StatusColor.Blocked
     DnsCheckStatus.SameAsProvider -> Color(0xFFF9A825)
     DnsCheckStatus.TlsFailed -> StatusColor.Warn
+    DnsCheckStatus.CertificateMismatch -> StatusColor.Warn
     DnsCheckStatus.Unreachable -> StatusColor.Muted
 }
 
@@ -472,6 +487,7 @@ private fun statusLabel(status: DnsCheckStatus): String = when (status) {
     DnsCheckStatus.Blocked -> "обнуляет домен"
     DnsCheckStatus.SameAsProvider -> "как у провайдера"
     DnsCheckStatus.TlsFailed -> "адрес не обслуживает домен"
+    DnsCheckStatus.CertificateMismatch -> "сервер сменил домен"
     DnsCheckStatus.Unreachable -> "не отвечает"
 }
 

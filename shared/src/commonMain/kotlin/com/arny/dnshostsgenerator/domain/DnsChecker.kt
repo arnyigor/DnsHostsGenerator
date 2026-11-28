@@ -30,6 +30,14 @@ enum class DnsCheckStatus {
     /** DNS ответил, но адрес не обслуживает домен (TLS не прошёл). */
     TlsFailed,
 
+    /**
+     * DoT-сервер жив, но сертификат выписан на другое имя: сервис сменил домен, а старое
+     * имя продолжают обслуживать. Проверено 24.11.2026 на api.bezshansov.ru
+     * (сертификат на api.magicinfo.art). Отдельный вердикт нужен потому, что совет
+     * «выберите другой DNS» здесь бесполезен — сервер работает, у него другое имя.
+     */
+    CertificateMismatch,
+
     /** DNS не отвечает: DoT/UDP недоступны. */
     Unreachable,
 }
@@ -144,10 +152,21 @@ class DnsChecker(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            return result(
-                DnsCheckStatus.Unreachable,
-                detail = error.message ?: error::class.simpleName,
-            )
+            val message = generateSequence<Throwable>(error) { it.cause }
+                .mapNotNull { it.message }
+                .joinToString(" ")
+            return if (CERT_MISMATCH_MARKERS.any { message.contains(it, ignoreCase = true) }) {
+                result(
+                    DnsCheckStatus.CertificateMismatch,
+                    detail = "сертификат выписан на другое имя — сервер сменил домен: " +
+                        message.take(120),
+                )
+            } else {
+                result(
+                    DnsCheckStatus.Unreachable,
+                    detail = error.message ?: error::class.simpleName,
+                )
+            }
         }
 
         if (ips.isEmpty()) {
@@ -186,6 +205,14 @@ class DnsChecker(
     }
 
     private companion object {
+        /** Признаки ошибки проверки имени в сертификате (Android и JVM формулируют по-разному). */
+        val CERT_MISMATCH_MARKERS = listOf(
+            "hostname mismatch",
+            "not verified",
+            "no name matching",
+            "doesn't match any of the subject",
+        )
+
         const val MAX_CONCURRENT_CHECKS = 6
         const val MAX_CHECKED_IPS = 2
     }

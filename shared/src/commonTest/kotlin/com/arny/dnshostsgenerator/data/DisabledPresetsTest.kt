@@ -20,9 +20,13 @@ class DisabledPresetsTest {
         // либо отдают недостижимые адреса: geohide, malw.link, pro.shecan.ir (+ xbox-dns.ru).
         assertEquals(
             listOf(
+                // 24.11.2026: DoT отдаёт сертификат на api.magicinfo.art — сервис сменил домен.
+                "api_bezshansov_ru",
                 // 14.11.2026: DoT на 83.220.169.155 обрывается EOF, подбор адреса не проходит.
                 "dns_comss_one",
                 "dns_geohide_ru",
+                // 24.11.2026: DoT молчит в таймаут — EU-ветка geohide тоже легла.
+                "dns_eu_geohide_ru",
                 "dns_us_geohide_ru",
                 "dns_malw_link",
                 "pro_shecan_ir",
@@ -56,11 +60,10 @@ class DisabledPresetsTest {
         assertEquals(
             listOf(
                 "dns_bezmezhau_com",
-                // 22.11.2026: DoT отвечает, один адрес 77.90.47.224 обслуживает
-                // gemini/aistudio/chatgpt — добавлен по наводке из шапки DNS-клуба.
-                "api_bezshansov_ru",
+                // 24.11.2026: живая проверка — Gemini 200, AI Studio 302, сертификат до 17.01.2027.
+                // Работает волнами, но самый повторяемый совет в ветке 4PDA.
+                "dns_magicdns_ru",
                 "dns_astracat_ru",
-                "dns_eu_geohide_ru",
                 "dns_mafioznik_xyz",
                 "free_shecan_ir",
                 "dns_wlrus_cfd",
